@@ -35,6 +35,10 @@ class AgentWorker(QThread):
         self._running = True
         self.status_changed.emit(True)
         self.log_message.emit("Bot başlatıldı — sinyaller taranıyor.")
+        self.log_message.emit(
+            "⏳ Warm-up: geçmiş paternler 'görünmüş' sayıldı. "
+            "Sadece bot start sonrası OLUŞAN yeni paternler tetiklenecek."
+        )
 
         while self._running:
             try:
