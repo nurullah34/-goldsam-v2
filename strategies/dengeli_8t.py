@@ -163,12 +163,22 @@ class Dengeli8T(Strategy):
         if len(bars) < min(WINDOWS) + 2:
             return None
 
-        # Yeni bar kontrolü — bot start sonrası geçmişteki paternleri
-        # tetiklememek için warm-up + same-bar dedup
         current_bar_time = bars[-1]["time"]
+
+        # WARM-UP: bot start anında ŞU AN aktif olan tüm paternleri "görünmüş"
+        # sayıp _seen'e ekle. Yalnızca bot start sonrası YENİ oluşacak
+        # paternler tetiklenecek.
         if self._last_bar_time is None:
+            for w in WINDOWS:
+                if len(bars) < w + 2:
+                    continue
+                sig = self._detect(bars, w, BOUNCE_PCT)
+                if sig is not None:
+                    self._seen.add(sig["dip_time"])
             self._last_bar_time = current_bar_time
             return None
+
+        # Aynı bar üzerinde tekrar tarama yapma
         if self._last_bar_time == current_bar_time:
             return None
         self._last_bar_time = current_bar_time
