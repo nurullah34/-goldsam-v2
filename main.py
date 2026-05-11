@@ -1,5 +1,6 @@
 import atexit
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -10,6 +11,22 @@ from version import APP_NAME
 
 BASE_DIR = Path(__file__).resolve().parent
 PID_FILE = BASE_DIR / ".app.pid"
+UPDATE_BAT = BASE_DIR / "_update.bat"
+UPDATE_TMP = BASE_DIR / ".update_tmp"
+
+
+def _cleanup_update_artifacts() -> None:
+    """Önceki güncellemeden kalmış _update.bat ve .update_tmp'yi sil."""
+    try:
+        if UPDATE_BAT.exists():
+            UPDATE_BAT.unlink()
+    except OSError:
+        pass
+    try:
+        if UPDATE_TMP.exists():
+            shutil.rmtree(UPDATE_TMP, ignore_errors=True)
+    except OSError:
+        pass
 
 
 def _kill_previous_instance() -> None:
@@ -50,6 +67,7 @@ def _cleanup_pid() -> None:
 
 def main() -> int:
     _kill_previous_instance()
+    _cleanup_update_artifacts()
     _write_pid()
     atexit.register(_cleanup_pid)
 
