@@ -19,6 +19,7 @@ from core.strategy_engine import StrategyEngine
 from core.trade_executor import TradeExecutor
 from core.updater import check_and_update
 from strategies.dengeli_8t import Dengeli8T
+from strategies.multi100.strategy import Multi100Strategy
 from version import VERSION, APP_NAME
 
 
@@ -430,7 +431,25 @@ class MainWindow(QMainWindow):
 
         smulti = self.card_multi.settings()
         if smulti["enabled"]:
-            self._log_msg("MULTI100: henüz M8'de entegre edilecek (şu an pasif).")
+            if smulti["lot"] <= 0:
+                self._log_msg("MULTI100: lot 0 — strateji başlatılamadı.")
+            else:
+                for tf in Multi100Strategy.all_timeframes():
+                    strat = Multi100Strategy(timeframe=tf, symbol=symbol)
+                    strat.apply_settings(
+                        enabled=True,
+                        lot=smulti["lot"],
+                        sl_usd=smulti["sl_usd"],
+                        trail_activate_usd=trail,
+                        avg_threshold_usd=smulti["avg_threshold_usd"],
+                        avg_lot=smulti["avg_lot"],
+                    )
+                    self.engine.register(strat)
+                    active_count += 1
+                self._log_msg(
+                    f"MULTI100 aktif | 4 TF (M30/H2/H3/H4) × 8 strateji = 32 kombinasyon "
+                    f"| {symbol} | lot={smulti['lot']} SL=${smulti['sl_usd']}"
+                )
 
         if active_count == 0:
             self._log_msg("Hiç strateji aktif değil — kartlardan en az 1 tane seç.")
