@@ -4,6 +4,7 @@ M5'te sadece sinyali log'a düşürür; M6'da TradeExecutor'a verir.
 """
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Callable, Optional
 
 try:
@@ -26,6 +27,10 @@ class StrategyEngine:
         self.max_concurrent: int = 999      # Sınırsız default
         self._limit_warned: bool = False    # spam log önleme
 
+        # M9: Cuma 17:00-23:59 hafta sonu koruması
+        self.weekend_protection: bool = False
+        self._weekend_warned: bool = False
+
     def register(self, strategy: Strategy) -> None:
         self._strategies.append(strategy)
 
@@ -44,6 +49,17 @@ class StrategyEngine:
         """Her aktif stratejiyi tara, sinyal varsa işle."""
         if mt5 is None:
             return
+
+        # M9: Hafta sonu koruması — Cuma 17:00-23:59 yeni emir alma
+        if self._is_weekend_blackout():
+            if not self._weekend_warned:
+                self.log(
+                    "🛑 Hafta sonu koruması aktif: Cuma 17:00-23:59 arası "
+                    "yeni emir alınmıyor. Açık pozisyonların trailing'i sürer."
+                )
+                self._weekend_warned = True
+            return
+        self._weekend_warned = False
 
         for strat in self._strategies:
             if not strat.enabled:
@@ -103,6 +119,16 @@ class StrategyEngine:
             return 0
         positions = mt5.positions_get(symbol=self.symbol) or []
         return len(positions)
+
+    def _is_weekend_blackout(self) -> bool:
+        """Cuma 17:00 - 23:59 (Cuma akşamı haftalık kapanış öncesi)."""
+        if not self.weekend_protection:
+            return False
+        now = datetime.now()
+        # weekday: Pazartesi=0, ..., Cuma=4
+        if now.weekday() == 4 and 17 <= now.hour < 24:
+            return True
+        return False
 
     def _strategy_magics(self, strat: Strategy) -> set[int]:
         """Bir stratejinin kullandığı magic numaralarını döndür.

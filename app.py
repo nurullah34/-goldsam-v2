@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit, QMessageBox
 )
 
+from core import settings as user_settings
 from core.agent_worker import AgentWorker
 from core.account_lock import bind as lock_bind, get_locked_info, is_bound, verify as lock_verify
 from core.device_id import get_display_name
@@ -243,6 +244,20 @@ class StrategyCard(QFrame):
             "avg_lot": self.avg_lot_input.value() if self.avg_lot_input.value() > 0 else None,
         }
 
+    def load_settings(self, data: dict) -> None:
+        """Kaydedilmiş ayardan widget'ları doldur (settings.json'dan açılışta)."""
+        self.chk.setChecked(bool(data.get("enabled", False)))
+        self.lot_input.setValue(float(data.get("lot", 0.0) or 0.0))
+        self.sl_input.setValue(float(data.get("sl_usd", 0.0) or 0.0))
+        self.avg_lot_input.setValue(float(data.get("avg_lot", 0.0) or 0.0))
+        avg_thr = data.get("avg_threshold_usd")
+        if avg_thr in (10, 20, 30, 40, 10.0, 20.0, 30.0, 40.0):
+            target_id = int(avg_thr)
+            for btn in self.avg_group.buttons():
+                if self.avg_group.id(btn) == target_id:
+                    btn.setChecked(True)
+                    break
+
 
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
@@ -290,6 +305,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._build_log_panel(), stretch=1)
         layout.addLayout(self._build_footer())
 
+        # Önce kaydedilmiş ayarları yükle (UI dolsun)
+        QTimer.singleShot(50, self._load_all_settings)
         QTimer.singleShot(400, self._try_connect_mt5)
 
     # ─── log + status ─────────────────────────────────────────
@@ -414,6 +431,12 @@ class MainWindow(QMainWindow):
         else:
             self._log_msg("⚙️ Eşzamanlı pozisyon limiti: SINIRSIZ")
 
+        # M9: Hafta sonu koruması
+        weekend = bool(self._kasa_weekend_chk and self._kasa_weekend_chk.isChecked())
+        self.engine.weekend_protection = weekend
+        if weekend:
+            self._log_msg("⚙️ Hafta sonu koruması: AÇIK (Cuma 17:00-23:59 yeni emir yok)")
+
         for card, direction, label in (
             (self.card_8t_long, "long", "8T LONG"),
             (self.card_8t_short, "short", "8T SHORT"),
@@ -495,6 +518,63 @@ class MainWindow(QMainWindow):
             return 999
         cid = self._kasa_concurrent_group.checkedId()
         return cid if cid >= 1 else 999
+
+    # ─── Settings persistence (M9) ────────────────────────────
+    def _load_all_settings(self) -> None:
+        """settings.json'dan UI'yı doldur."""
+        s = user_settings.load()
+        strats = s.get("strategies", {})
+        self.card_8t_long.load_settings(strats.get("8t_long", {}))
+        self.card_8t_short.load_settings(strats.get("8t_short", {}))
+        self.card_multi.load_settings(strats.get("multi100", {}))
+
+        kasa = s.get("kasa", {})
+        # Concurrent limit
+        cl = int(kasa.get("concurrent_limit", 999))
+        if self._kasa_concurrent_group is not None:
+            for btn in self._kasa_concurrent_group.buttons():
+                if self._kasa_concurrent_group.id(btn) == cl:
+                    btn.setChecked(True)
+                    break
+        # Weekend protection
+        if self._kasa_weekend_chk is not None:
+            self._kasa_weekend_chk.setChecked(bool(kasa.get("weekend_protection", False)))
+        # Manual positions trail
+        if self._kasa_manuel_chk is not None:
+            self._kasa_manuel_chk.setChecked(bool(kasa.get("manual_positions_trail", False)))
+        # Trail activate USD
+        ta = int(kasa.get("trail_activate_usd", 1))
+        if self._kasa_trail_group is not None:
+            for btn in self._kasa_trail_group.buttons():
+                if self._kasa_trail_group.id(btn) == ta:
+                    btn.setChecked(True)
+                    break
+
+        self._log_msg(f"📂 Ayarlar yüklendi ({user_settings.SETTINGS_FILE.name})")
+
+    def _save_all_settings(self) -> None:
+        """UI'dan ayarları al, settings.json'a yaz."""
+        data = {
+            "version": 1,
+            "strategies": {
+                "8t_long":  self.card_8t_long.settings(),
+                "8t_short": self.card_8t_short.settings(),
+                "multi100": self.card_multi.settings(),
+            },
+            "kasa": {
+                "concurrent_limit":       self._kasa_concurrent_limit(),
+                "weekend_protection":     (self._kasa_weekend_chk.isChecked()
+                                           if self._kasa_weekend_chk else False),
+                "manual_positions_trail": (self._kasa_manuel_chk.isChecked()
+                                           if self._kasa_manuel_chk else False),
+                "trail_activate_usd":     int(self._kasa_trail_value()),
+            },
+        }
+        ok, msg = user_settings.save(data)
+        if ok:
+            self._log_msg(f"💾 Ayarlar kaydedildi: {msg}")
+        else:
+            self._log_msg(f"❌ Ayarlar kaydedilemedi: {msg}")
 
     def _check_update(self) -> None:
         """Güncelle butonu — GitHub'dan en son sürümü kontrol et + uygula."""
@@ -666,7 +746,7 @@ class MainWindow(QMainWindow):
         save_btn = QPushButton("Kaydet")
         save_btn.setObjectName("SaveBtn")
         save_btn.setMinimumHeight(36)
-        save_btn.clicked.connect(lambda: self._log_msg("Kaydet — ayarlar kaydedildi (M9'da gerçek dosyaya yazılacak)."))
+        save_btn.clicked.connect(self._save_all_settings)
         h.addWidget(save_btn)
 
         self._start_btn = QPushButton("Botu Başlat")
