@@ -7,7 +7,7 @@ from PySide6.QtCore import Qt, QLocale, QTimer
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame,
     QPushButton, QCheckBox, QDoubleSpinBox, QRadioButton, QButtonGroup,
-    QPlainTextEdit, QComboBox, QMessageBox
+    QPlainTextEdit, QMessageBox
 )
 
 from core.agent_worker import AgentWorker
@@ -270,7 +270,8 @@ class MainWindow(QMainWindow):
         self._log: Optional[QPlainTextEdit] = None
         self._start_btn: Optional[QPushButton] = None
         self._stop_btn: Optional[QPushButton] = None
-        self._symbol_combo: Optional[QComboBox] = None
+        self._symbol_label: Optional[QLabel] = None
+        self._detected_symbol: Optional[str] = None
         self._kasa_concurrent_group: Optional[QButtonGroup] = None
         self._kasa_weekend_chk: Optional[QCheckBox] = None
         self._kasa_manuel_chk: Optional[QCheckBox] = None
@@ -356,30 +357,28 @@ class MainWindow(QMainWindow):
                 self._start_btn.setEnabled(False)
 
     def _populate_symbols(self) -> None:
-        if self._symbol_combo is None:
-            return
-        symbols = self.mt5.list_gold_symbols()
-        current = self._symbol_combo.currentText()
-        self._symbol_combo.blockSignals(True)
-        self._symbol_combo.clear()
-        if symbols:
-            self._symbol_combo.addItems(symbols)
-            # Önceden seçili varsa onu koru, yoksa ilk yaygın olanı al
-            if current and current in symbols:
-                self._symbol_combo.setCurrentText(current)
-            self._log_msg(f"Sembol listesi: {', '.join(symbols[:5])}"
-                          + (f"  (+{len(symbols)-5} daha)" if len(symbols) > 5 else ""))
+        """MT5'ten otomatik olarak gold sembolünü tespit et + UI'ya yaz."""
+        detected = self.mt5.detect_gold_symbol()
+        if detected:
+            self._detected_symbol = detected
+            if self._symbol_label is not None:
+                self._symbol_label.setText(detected)
+            self._log_msg(f"💠 Sembol otomatik tespit edildi: {detected}")
         else:
-            self._symbol_combo.addItem("GOLD#")
-            self._log_msg("Sembol listesi alınamadı — GOLD# default kullanılıyor.")
-        self._symbol_combo.blockSignals(False)
+            self._detected_symbol = None
+            if self._symbol_label is not None:
+                self._symbol_label.setText("YOK!")
+                self._symbol_label.setStyleSheet(
+                    "color: #f85149; font-weight: 600; padding: 2px 10px; "
+                    "background-color: #0d1117; border: 1px solid #f85149; border-radius: 4px;"
+                )
+            self._log_msg(
+                "❌ XAUUSD/GOLD sembolü bulunamadı. Broker'ın Market Watch'ında "
+                "altın sembolü olduğundan emin ol."
+            )
 
     def _current_symbol(self) -> str:
-        if self._symbol_combo is not None:
-            t = self._symbol_combo.currentText().strip()
-            if t:
-                return t
-        return "GOLD#"
+        return self._detected_symbol or "GOLD#"
 
     # ─── Bot başlat/durdur ────────────────────────────────────
     def _start_bot(self) -> None:
@@ -393,6 +392,10 @@ class MainWindow(QMainWindow):
 
         if not self._account_locked:
             self._log_msg("🚫 Hesap kilidi doğrulanmadı — bot başlatılamaz.")
+            return
+
+        if not self._detected_symbol:
+            self._log_msg("🚫 Sembol tespit edilemedi — bot başlatılamaz.")
             return
 
         # Kartlardan ayarları topla, stratejileri register et
@@ -498,14 +501,17 @@ class MainWindow(QMainWindow):
         h.addWidget(bot_label)
 
         h.addSpacing(20)
-        sym_label = QLabel("Sembol:")
-        sym_label.setStyleSheet("color: #8b949e;")
-        h.addWidget(sym_label)
-        self._symbol_combo = QComboBox()
-        self._symbol_combo.setEditable(True)
-        self._symbol_combo.addItem("GOLD#")
-        self._symbol_combo.setMinimumWidth(140)
-        h.addWidget(self._symbol_combo)
+        sym_caption = QLabel("Sembol:")
+        sym_caption.setStyleSheet("color: #8b949e;")
+        h.addWidget(sym_caption)
+        self._symbol_label = QLabel("—")
+        self._symbol_label.setStyleSheet(
+            "color: #e6edf3; font-weight: 600; padding: 2px 10px; "
+            "background-color: #0d1117; border: 1px solid #30363d; border-radius: 4px;"
+        )
+        self._symbol_label.setMinimumWidth(120)
+        self._symbol_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        h.addWidget(self._symbol_label)
 
         h.addStretch(1)
         cihaz = QLabel(f"Cihaz: {get_display_name()}")

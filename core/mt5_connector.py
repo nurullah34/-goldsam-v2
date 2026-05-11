@@ -71,20 +71,42 @@ class MT5Connector:
         self._connected = False
         self._account_info = None
 
-    def list_gold_symbols(self) -> list[str]:
-        """Broker'daki altın sembollerini bul (GOLD/XAU içerenler)."""
+    def detect_gold_symbol(self) -> Optional[str]:
+        """Broker'daki XAUUSD/GOLD sembolünü otomatik bul.
+
+        Hisse senedi (BarrickGold, Goldman Sachs vs.) filtrelenir —
+        sadece SPOT METAL sembolü döner. Yaygın isimleri öncelikli sırada
+        dener:  GOLD# → XAUUSD → XAUUSD.r → XAUUSDm → GOLDm# → GOLD ...
+
+        Hiçbiri yoksa, isminde XAU+USD geçen ilk sembolü döner.
+        """
         if mt5 is None or not self._connected:
-            return []
+            return None
+
         symbols = mt5.symbols_get()
         if symbols is None:
-            return []
-        out: list[str] = []
-        for s in symbols:
-            name = s.name.upper()
-            if "GOLD" in name or "XAU" in name:
-                out.append(s.name)
-        # Yaygın isimleri başa al
-        priority = ["GOLD#", "XAUUSD", "GOLD", "XAUUSD.r", "XAUUSDm", "GOLDm#"]
-        ordered = [p for p in priority if p in out]
-        ordered += [s for s in out if s not in priority]
-        return ordered
+            return None
+        available = {s.name for s in symbols}
+
+        # Yaygın isimler (XM, IC, Pepperstone, FTMO, Exness, Robo)
+        priority = [
+            "GOLD#",       # XM Global
+            "XAUUSD",      # IC Markets, FTMO, Pepperstone
+            "XAUUSD.r",    # raw spread variants
+            "XAUUSD.a",
+            "XAUUSDm",     # Exness micro
+            "GOLDm#",      # XM Micro
+            "GOLD",        # bazi brokerler
+            "GOLDb",
+        ]
+        for name in priority:
+            if name in available:
+                return name
+
+        # Yedek: XAUUSD ile başlayan herhangi bir sembol
+        for name in available:
+            up = name.upper()
+            if up.startswith("XAUUSD"):
+                return name
+
+        return None
