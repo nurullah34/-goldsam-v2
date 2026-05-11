@@ -11,6 +11,7 @@ yapılmadan tüm pozisyonlara trailing uygulanır.
 """
 from __future__ import annotations
 
+import time
 from typing import Callable, Iterable, Optional
 
 try:
@@ -21,6 +22,11 @@ except ImportError:
 from core.lifecycle import compute_new_sl
 
 
+# MT5 retcode'lar: 10018 = TRADE_DISABLED (market kapalı), 10027 = REQUOTE, vs.
+# Bunları sessizce yut (spam önlemek için)
+SILENT_RETCODES = {10018, 10027, 10004, 10014}
+
+
 class PositionMonitor:
     def __init__(self, log: Callable[[str], None], symbol: str = "GOLD#") -> None:
         self.log = log
@@ -28,6 +34,7 @@ class PositionMonitor:
         self.trail_activate_usd: float = 1.0
         self.manage_manual_positions: bool = False
         self._known_tickets: set[int] = set()
+        self._silent_warned: bool = False  # market kapalı uyarısı spam önleyici
 
     # ─── Ayar setter'ları ─────────────────────────────────────
     def set_trail_activate(self, usd: float) -> None:
@@ -85,11 +92,40 @@ class PositionMonitor:
 
             self._modify_sl(p, new_sl, side)
 
-        # Kapanan pozisyonları tespit et
+        # Kapanan pozisyonları tespit et — P/L ile birlikte logla
         closed = self._known_tickets - live_tickets
         for t in closed:
-            self.log(f"📤 Pozisyon kapandı #{t}")
+            pnl = self._fetch_close_profit(t)
+            if pnl is None:
+                self.log(f"📤 Pozisyon kapandı #{t}")
+            else:
+                sign = "+" if pnl >= 0 else ""
+                emoji = "💰" if pnl > 0 else ("💸" if pnl < -0.001 else "📤")
+                self.log(f"{emoji} Pozisyon kapandı #{t}  P/L: {sign}${pnl:.2f}")
         self._known_tickets = live_tickets
+
+    def _fetch_close_profit(self, ticket: int) -> Optional[float]:
+        """history_deals_get ile kapanış deal'larını bul, net P/L döndür.
+
+        position_id = ticket eşleşen DEAL_ENTRY_OUT deal'ların profit + komisyon + swap'ı toplanır.
+        """
+        if mt5 is None:
+            return None
+        now = int(time.time())
+        try:
+            deals = mt5.history_deals_get(now - 86400 * 2, now + 60)
+        except Exception:
+            return None
+        if deals is None:
+            return None
+
+        total = 0.0
+        found = False
+        for d in deals:
+            if d.position_id == ticket and d.entry in (mt5.DEAL_ENTRY_OUT, mt5.DEAL_ENTRY_INOUT):
+                total += float(d.profit or 0) + float(d.commission or 0) + float(d.swap or 0)
+                found = True
+        return round(total, 2) if found else None
 
     def _modify_sl(self, position, new_sl: float, side: str) -> None:
         if mt5 is None:
@@ -103,12 +139,45 @@ class PositionMonitor:
         }
         r = mt5.order_send(request)
         if r is None or r.retcode != mt5.TRADE_RETCODE_DONE:
-            err = r.retcode if r else mt5.last_error()
-            self.log(f"SL modify HATA #{position.ticket}: {err}")
+            err = r.retcode if r else None
+            # Market kapalı / requote gibi spam'leri 1 kez logla
+            if err in SILENT_RETCODES:
+                if not self._silent_warned:
+                    self.log(f"⏸ SL modify atlandı (market kapalı / retcode {err}). Bu uyarı tekrarlanmayacak.")
+                    self._silent_warned = True
+                return
+            self._silent_warned = False
+            self.log(f"❌ SL modify HATA #{position.ticket}: retcode={err}")
             return
 
+        self._silent_warned = False
+
+        # Locked $ hesapla
+        locked_usd = self._calc_locked_usd(position, new_sl, side)
         side_txt = "L" if side == "buy" else "S"
+        if locked_usd is None:
+            locked_str = ""
+        else:
+            sign = "+" if locked_usd >= 0 else ""
+            locked_str = f"  ({sign}${locked_usd:.2f} locked)"
+
         self.log(
-            f"🔒 SL #{position.ticket} [{side_txt}] → {new_sl:.{2}f}  "
-            f"(entry {position.price_open:.2f})"
+            f"🔒 SL #{position.ticket} [{side_txt}] → {new_sl:.2f}  "
+            f"(entry {position.price_open:.2f}){locked_str}"
         )
+
+    def _calc_locked_usd(self, position, new_sl: float, side: str) -> Optional[float]:
+        """SL'in entry'ye göre lock'ladığı net $ kâr."""
+        if mt5 is None:
+            return None
+        si = mt5.symbol_info(self.symbol)
+        if si is None or si.trade_tick_size <= 0:
+            return None
+        usd_per_dollar = (si.trade_tick_value / si.trade_tick_size) * position.volume
+        if usd_per_dollar <= 0:
+            return None
+        if side == "buy":
+            locked_price = new_sl - position.price_open
+        else:
+            locked_price = position.price_open - new_sl
+        return round(locked_price * usd_per_dollar, 2)
