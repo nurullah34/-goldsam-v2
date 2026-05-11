@@ -7,10 +7,12 @@ from PySide6.QtCore import Qt, QLocale, QTimer
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame,
     QPushButton, QCheckBox, QDoubleSpinBox, QRadioButton, QButtonGroup,
-    QPlainTextEdit, QComboBox
+    QPlainTextEdit, QComboBox, QMessageBox
 )
 
 from core.agent_worker import AgentWorker
+from core.account_lock import bind as lock_bind, get_locked_info, is_bound, verify as lock_verify
+from core.device_id import get_display_name
 from core.mt5_connector import MT5Connector
 from core.position_monitor import PositionMonitor
 from core.strategy_engine import StrategyEngine
@@ -255,6 +257,7 @@ class MainWindow(QMainWindow):
         self.engine = StrategyEngine(log=self._log_msg)
         self.engine.on_signal = lambda sig, strat: self.executor.execute(sig)
         self.worker: Optional[AgentWorker] = None
+        self._account_locked: bool = False  # Lock doğrulamadan bot başlamaz
 
         # Strateji kartları
         self.card_8t_long = StrategyCard("8T LONG")
@@ -317,9 +320,40 @@ class MainWindow(QMainWindow):
                 f"| {ai.get('company')} | Bakiye ${ai.get('balance'):.2f}"
             )
             self._populate_symbols()
+            self._verify_account_lock(ai)
         else:
             self._set_dot(self._dot_mt5, DOT_ERR)
             self._log_msg(f"MT5 BAĞLANTI HATASI: {self.mt5.last_error}")
+
+    def _verify_account_lock(self, account_info: dict) -> None:
+        """İlk açılışsa kilitle, değilse doğrula."""
+        if not is_bound():
+            ok, msg = lock_bind(account_info)
+            if ok:
+                self._account_locked = True
+                self._log_msg(f"🔐 {msg}")
+                self._log_msg("⚠️  Bu bot artık SADECE bu hesapta çalışır. Başka MT5 hesabıyla açılırsa kapanır.")
+            else:
+                self._log_msg(f"LOCK HATASI: {msg}")
+            return
+
+        ok, msg = lock_verify(account_info)
+        if ok:
+            self._account_locked = True
+            locked = get_locked_info() or {}
+            bound_at = locked.get("bound_at", "?")
+            self._log_msg(f"🔐 {msg}  (bind: {bound_at})")
+        else:
+            self._account_locked = False
+            self._log_msg(f"🚫 YETKİSİZ HESAP: {msg}")
+            QMessageBox.critical(
+                self,
+                "Yetkisiz Hesap",
+                f"{msg}\n\nDoğru MT5 hesabını açıp tekrar deneyin.\n"
+                f"Bot 'Botu Başlat' tuşu DEVRE DIŞI bırakıldı."
+            )
+            if self._start_btn is not None:
+                self._start_btn.setEnabled(False)
 
     def _populate_symbols(self) -> None:
         if self._symbol_combo is None:
@@ -355,6 +389,10 @@ class MainWindow(QMainWindow):
 
         if not self.mt5.connected:
             self._log_msg("ÖNCE MT5'e bağlanılmalı (MT5 Test ile dene).")
+            return
+
+        if not self._account_locked:
+            self._log_msg("🚫 Hesap kilidi doğrulanmadı — bot başlatılamaz.")
             return
 
         # Kartlardan ayarları topla, stratejileri register et
@@ -470,7 +508,7 @@ class MainWindow(QMainWindow):
         h.addWidget(self._symbol_combo)
 
         h.addStretch(1)
-        cihaz = QLabel(f"Cihaz: {socket.gethostname()}")
+        cihaz = QLabel(f"Cihaz: {get_display_name()}")
         cihaz.setStyleSheet("color: #8b949e;")
         h.addWidget(cihaz)
         return frame
