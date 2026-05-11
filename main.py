@@ -67,7 +67,6 @@ def _cleanup_pid() -> None:
 
 def main() -> int:
     _kill_previous_instance()
-    _cleanup_update_artifacts()
     _write_pid()
     atexit.register(_cleanup_pid)
 
@@ -77,6 +76,12 @@ def main() -> int:
 
     win = MainWindow()
     win.show()
+
+    # _update.bat cleanup'ı 2.5 saniye geciktir — update.bat'ı çağıran cmd
+    # tam kapansın, dosya unlock olsun, sonra silmeyi dene.
+    from PySide6.QtCore import QTimer
+    QTimer.singleShot(2500, _cleanup_update_artifacts)
+
     return qt.exec()
 
 
