@@ -578,16 +578,23 @@ class MainWindow(QMainWindow):
 
     def _check_update(self) -> None:
         """Güncelle butonu — GitHub'dan en son sürümü kontrol et + uygula."""
-        # Bot çalışıyorsa önce durdur (yoksa dosyalar locked olur)
+        # Bot çalışıyorsa önce durdur (worker thread temiz kapansın)
         if self.worker is not None and self.worker.isRunning():
             self._log_msg("Önce botu durduruyorum (güncelleme için)...")
             self.worker.stop()
             self.worker.wait(8000)
 
+        # MT5 bağlantısını da kapat (yeni process açacak)
+        if self.mt5.connected:
+            try:
+                self.mt5.disconnect()
+            except Exception:
+                pass
+
         result = check_and_update(BASE_DIR, VERSION, self._log_msg)
         if result is True:
-            self._log_msg("Güncelleme başlatıldı, pencere 3 saniye içinde kapanacak.")
-            QTimer.singleShot(2500, self.close)
+            self._log_msg("Yeni sürüm açıldı, eski pencere kapanıyor...")
+            QTimer.singleShot(1500, self.close)
 
     # ─── UI BUILD ─────────────────────────────────────────────
     def _build_top_status(self) -> QFrame:

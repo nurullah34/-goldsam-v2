@@ -16,7 +16,8 @@ UPDATE_TMP = BASE_DIR / ".update_tmp"
 
 
 def _cleanup_update_artifacts() -> None:
-    """Önceki güncellemeden kalmış _update.bat ve .update_tmp'yi sil."""
+    """Eski sürümlerden (v1.4.7 ve öncesi) kalan _update.bat ve .update_tmp'yi sil.
+    v1.4.8+ artık batch file kullanmaz, bu sadece geriye dönük temizlik."""
     try:
         if UPDATE_BAT.exists():
             UPDATE_BAT.unlink()

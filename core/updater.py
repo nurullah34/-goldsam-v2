@@ -1,20 +1,21 @@
 """Auto-update — GitHub'dan en son sürümü çekip kendini günceller.
 
-Akış:
-  1. GitHub raw'dan version.py'yi çek, VERSION'ı parse et.
-  2. Mevcut VERSION ile karşılaştır.
-  3. Yeniyse: main branch'ini zip olarak indir, geçici klasöre extract et.
-  4. Bir update.bat oluştur:
-       - 3 saniye bekle (bot kapansın)
-       - yeni dosyaları kopyala
-       - pythonw main.py ile yeniden başlat
-  5. update.bat'ı arka planda çalıştır, bot'u kapat.
+Mt5-agent pattern'i:
+  1. GitHub raw'dan version.py'yi çek → uzak VERSION.
+  2. Yerel VERSION ile karşılaştır.
+  3. Yeniyse: main branch'i zip indir → bellek üzerinde aç.
+  4. Her dosyayı doğrudan base_dir'a yaz (.py dosyaları lock değil).
+  5. subprocess.Popen ile yeni Python process'i başlat (detached).
+  6. Eski bot QApplication.quit() ile kapanır.
+
+Batch file YOK. Geçici klasör YOK. _update.bat YOK. Tertemiz.
 """
 from __future__ import annotations
 
 import io
 import os
 import re
+import shutil
 import subprocess
 import sys
 import urllib.request
@@ -35,7 +36,7 @@ ZIP_URL = (
 
 
 def _ver_tuple(v: str) -> tuple[int, ...]:
-    """'1.3.4' → (1, 3, 4) — sürüm karşılaştırması için."""
+    """'1.4.8' → (1, 4, 8) — sürüm karşılaştırması."""
     return tuple(int(x) for x in re.findall(r"\d+", v))
 
 
@@ -50,7 +51,6 @@ def fetch_remote_version(timeout: int = 10) -> Optional[str]:
             text = resp.read().decode("utf-8")
     except Exception:
         return None
-
     match = re.search(r'VERSION\s*=\s*["\']([0-9.]+)["\']', text)
     return match.group(1) if match else None
 
@@ -62,11 +62,21 @@ def is_update_available(current: str, remote: str) -> bool:
         return False
 
 
+# Bot tarafında SİLİNMEMESİ gereken kullanıcıya özel dosyalar
+PRESERVE_NAMES = {
+    ".app.pid",
+    ".gitignore",
+    ".update_tmp",
+    "_update.bat",
+}
+
+
 def download_and_apply(
     base_dir: Path,
     log: Callable[[str], None],
 ) -> bool:
-    """Zip indir → extract → update.bat oluştur → bot'u kapat."""
+    """Zip indir → bellekten dosyaları yaz → yeni Python process'i başlat."""
+    # 1. Zip indir
     try:
         log(f"Güncelleme indiriliyor: {ZIP_URL}")
         req = urllib.request.Request(
@@ -74,64 +84,61 @@ def download_and_apply(
         )
         with urllib.request.urlopen(req, timeout=60) as resp:
             zip_bytes = resp.read()
-        log(f"İndirme tamam ({len(zip_bytes)/1024:.1f} KB), açılıyor...")
+        log(f"İndirme tamam ({len(zip_bytes)/1024:.1f} KB)")
     except Exception as e:
         log(f"İndirme başarısız: {e}")
         return False
 
-    tmp_dir = base_dir / ".update_tmp"
-    if tmp_dir.exists():
-        # Eski geçici dosyaları temizle
-        import shutil
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-    tmp_dir.mkdir(exist_ok=True)
-
+    # 2. Zip'i bellek üzerinde aç, dosyaları doğrudan base_dir'a yaz
+    written = 0
     try:
         with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
-            z.extractall(tmp_dir)
+            for name in z.namelist():
+                if name.endswith("/"):
+                    continue
+                # Path: "-goldsam-v2-main/core/lifecycle.py"
+                # İlk component'i at (repo+branch klasörü)
+                if "/" not in name:
+                    continue
+                rel = name.split("/", 1)[1]
+                if not rel:
+                    continue
+
+                # Korunan dosyaları atla
+                first_part = rel.split("/", 1)[0]
+                if first_part in PRESERVE_NAMES:
+                    continue
+
+                dst = base_dir / rel
+                try:
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    with z.open(name) as src, open(dst, "wb") as out:
+                        shutil.copyfileobj(src, out)
+                    written += 1
+                except Exception as e:
+                    log(f"  ⚠️ {rel} yazılamadı: {e}")
     except Exception as e:
-        log(f"Zip açılamadı: {e}")
+        log(f"Zip açma hatası: {e}")
         return False
 
-    # Zip içinde tek alt-klasör var: "{repo}-{branch}"
-    inner = list(tmp_dir.iterdir())
-    if not inner:
-        log("Zip içeriği boş.")
+    log(f"✓ {written} dosya güncellendi.")
+
+    # 3. Yeni Python process'i başlat (detached)
+    try:
+        DETACHED_PROCESS = 0x00000008
+        CREATE_NEW_PROCESS_GROUP = 0x00000200
+        # sys.executable = pythonw.exe veya python.exe
+        subprocess.Popen(
+            [sys.executable, str(base_dir / "main.py")],
+            cwd=str(base_dir),
+            creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
+            close_fds=True,
+        )
+        log("Yeni sürüm başlatıldı, bot kapanıyor...")
+        return True
+    except Exception as e:
+        log(f"Yeni process başlatma hatası: {e}")
         return False
-    src_dir = inner[0]
-    log(f"Yeni sürüm klasörü: {src_dir.name}")
-
-    # update.bat oluştur — bot kapandıktan sonra dosyaları yer değiştirir.
-    # Self-delete için Windows'un klasik (goto) trick'i kullanılır.
-    update_bat = base_dir / "_update.bat"
-    update_bat.write_text(
-        "@echo off\r\n"
-        "chcp 65001 >NUL\r\n"
-        "title GOLDSAM V2 - Update\r\n"
-        "echo Bot kapanıyor, 3 saniye bekleniyor...\r\n"
-        "timeout /t 3 /nobreak >NUL\r\n"
-        f'xcopy "{src_dir}\\*" "{base_dir}" /E /Y /Q\r\n'
-        f'rmdir /S /Q "{tmp_dir}"\r\n'
-        f'del "{base_dir}\\.app.pid" 2>NUL\r\n'
-        "echo Güncelleme tamam. Bot yeniden başlatılıyor...\r\n"
-        "timeout /t 1 /nobreak >NUL\r\n"
-        f'cd /d "{base_dir}"\r\n'
-        f'start "" pythonw "{base_dir}\\main.py"\r\n'
-        # Self-delete: goto invalid label → parser bu noktada durur, & del çalışır
-        '(goto) 2>nul & del "%~f0"\r\n',
-        encoding="utf-8",
-    )
-    log("Update script hazır, bot 3 saniye içinde yeniden başlayacak.")
-
-    # update.bat'ı arka planda başlat — yeni bir konsol açar ama anında detach olur
-    DETACHED_PROCESS = 0x00000008
-    CREATE_NEW_PROCESS_GROUP = 0x00000200
-    subprocess.Popen(
-        ["cmd", "/c", str(update_bat)],
-        creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
-        close_fds=True,
-    )
-    return True
 
 
 def check_and_update(
@@ -139,9 +146,7 @@ def check_and_update(
     current_version: str,
     log: Callable[[str], None],
 ) -> Optional[bool]:
-    """True: güncellendi, bot kapatılmalı.
-    False: güncel zaten.
-    None: hata oldu, hiçbir şey yapılmadı."""
+    """True: güncellendi, bot kapatılmalı. False: zaten güncel. None: hata."""
     log("GitHub kontrol ediliyor...")
     remote = fetch_remote_version()
     if remote is None:
@@ -154,6 +159,4 @@ def check_and_update(
 
     log(f"Yeni sürüm bulundu: v{current_version} → v{remote}")
     ok = download_and_apply(base_dir, log)
-    if not ok:
-        return None
-    return True
+    return True if ok else None
