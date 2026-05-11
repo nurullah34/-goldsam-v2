@@ -404,7 +404,15 @@ class MainWindow(QMainWindow):
         active_count = 0
         trail = self._kasa_trail_value()
         symbol = self._current_symbol()
+        concurrent = self._kasa_concurrent_limit()
         self.monitor.symbol = symbol
+        self.engine.symbol = symbol
+        self.engine.max_concurrent = concurrent
+
+        if concurrent < 999:
+            self._log_msg(f"⚙️ Eşzamanlı pozisyon limiti: max {concurrent}")
+        else:
+            self._log_msg("⚙️ Eşzamanlı pozisyon limiti: SINIRSIZ")
 
         for card, direction, label in (
             (self.card_8t_long, "long", "8T LONG"),
@@ -481,6 +489,12 @@ class MainWindow(QMainWindow):
             return 1.0
         cid = self._kasa_trail_group.checkedId()
         return float(cid) if cid >= 1 else 1.0
+
+    def _kasa_concurrent_limit(self) -> int:
+        if self._kasa_concurrent_group is None:
+            return 999
+        cid = self._kasa_concurrent_group.checkedId()
+        return cid if cid >= 1 else 999
 
     def _check_update(self) -> None:
         """Güncelle butonu — GitHub'dan en son sürümü kontrol et + uygula."""
@@ -562,16 +576,17 @@ class MainWindow(QMainWindow):
         v.setContentsMargins(4, 4, 4, 4)
         v.setSpacing(8)
 
-        # Aynı anda açık işlem sayısı
+        # Aynı anda açık işlem sayısı — id direkt limit değeri (3,6,10,999=sınırsız)
         self._kasa_concurrent_group = QButtonGroup(box)
         concurrent_hb = QHBoxLayout()
         concurrent_hb.setSpacing(6)
-        for i, txt in enumerate(["1-3", "4-6", "7-10", "Sınırsız"]):
+        concurrent_options = [(3, "1-3"), (6, "4-6"), (10, "7-10"), (999, "Sınırsız")]
+        for limit_val, txt in concurrent_options:
             rb = QRadioButton(txt)
             rb.setObjectName("AvgRadio")
-            if txt == "Sınırsız":
+            if limit_val == 999:
                 rb.setChecked(True)
-            self._kasa_concurrent_group.addButton(rb, i)
+            self._kasa_concurrent_group.addButton(rb, limit_val)
             concurrent_hb.addWidget(rb)
         concurrent_hb.addStretch(1)
         v.addLayout(self._kasa_row("Aynı anda açık\nişlem sayısı", concurrent_hb))
