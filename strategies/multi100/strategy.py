@@ -41,11 +41,26 @@ class Multi100Strategy(Strategy):
         self.key = f"multi100_{timeframe.lower()}"
         self.display = f"MULTI100 {timeframe}"
         self.magic = MAGIC_MAP[timeframe]
+        self._last_bar_time: Optional[str] = None  # yeni bar kontrolü
 
     def check(self, bars_by_tf: dict[str, list[dict]]) -> Optional[Signal]:
         bars = bars_by_tf.get(self.timeframe, [])
         if len(bars) < 60:
             return None
+
+        # YENİ BAR KONTROLÜ — bot start anında veya aynı bar üzerinde
+        # tekrar tarama yapma. multi100.py orijinalindeki 'new_bar' mantığı:
+        #   - İlk çağrı: warm-up (sinyal verme, sadece time kaydet)
+        #   - Aynı bar tekrar: skip
+        #   - Yeni bar: tara
+        current_bar_time = bars[-1]["time"]
+        if self._last_bar_time is None:
+            # Warm-up — bot ilk çağrıda mevcut barı 'görmüş' say
+            self._last_bar_time = current_bar_time
+            return None
+        if self._last_bar_time == current_bar_time:
+            return None  # aynı bar, tekrar tetikleme yok
+        self._last_bar_time = current_bar_time
 
         df = pd.DataFrame(bars)
         try:

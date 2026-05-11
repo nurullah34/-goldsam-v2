@@ -143,6 +143,7 @@ class Dengeli8T(Strategy):
         self.direction = direction
         self.symbols = [symbol]
         self._seen: set[str] = set()
+        self._last_bar_time: Optional[str] = None   # yeni bar kontrolü
 
         if direction == "long":
             self.key = "dengeli_8t_long"
@@ -161,6 +162,16 @@ class Dengeli8T(Strategy):
         bars = bars_by_tf.get("M1", [])
         if len(bars) < min(WINDOWS) + 2:
             return None
+
+        # Yeni bar kontrolü — bot start sonrası geçmişteki paternleri
+        # tetiklememek için warm-up + same-bar dedup
+        current_bar_time = bars[-1]["time"]
+        if self._last_bar_time is None:
+            self._last_bar_time = current_bar_time
+            return None
+        if self._last_bar_time == current_bar_time:
+            return None
+        self._last_bar_time = current_bar_time
 
         for w in WINDOWS:
             if len(bars) < w + 2:
