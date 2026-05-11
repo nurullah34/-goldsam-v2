@@ -101,8 +101,8 @@ def download_and_apply(
     src_dir = inner[0]
     log(f"Yeni sürüm klasörü: {src_dir.name}")
 
-    # update.bat oluştur — bot kapandıktan sonra dosyaları yer değiştirir
-    # ve sonunda KENDİ KENDİNİ siler (self-delete pattern).
+    # update.bat oluştur — bot kapandıktan sonra dosyaları yer değiştirir.
+    # Self-delete için Windows'un klasik (goto) trick'i kullanılır.
     update_bat = base_dir / "_update.bat"
     update_bat.write_text(
         "@echo off\r\n"
@@ -117,10 +117,8 @@ def download_and_apply(
         "timeout /t 1 /nobreak >NUL\r\n"
         f'cd /d "{base_dir}"\r\n'
         f'start "" pythonw "{base_dir}\\main.py"\r\n'
-        # Self-delete — yeni cmd başlat, 3 sn bekle, _update.bat'ı sil.
-        # Bu sırada mevcut bat çıkmış olur, dosya unlock olur.
-        f'start "" /B cmd /c "timeout /t 3 /nobreak >NUL & del /Q \\"{update_bat}\\""\r\n'
-        "exit\r\n",
+        # Self-delete: goto invalid label → parser bu noktada durur, & del çalışır
+        '(goto) 2>nul & del "%~f0"\r\n',
         encoding="utf-8",
     )
     log("Update script hazır, bot 3 saniye içinde yeniden başlayacak.")

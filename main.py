@@ -77,10 +77,12 @@ def main() -> int:
     win = MainWindow()
     win.show()
 
-    # _update.bat cleanup'ı 2.5 saniye geciktir — update.bat'ı çağıran cmd
-    # tam kapansın, dosya unlock olsun, sonra silmeyi dene.
+    # _update.bat cleanup'ı 3 kez dene — Windows file lock race condition için.
+    # Eğer self-delete (goto trick) çalışmadıysa, bot'un kendisi siler.
     from PySide6.QtCore import QTimer
     QTimer.singleShot(2500, _cleanup_update_artifacts)
+    QTimer.singleShot(5000, _cleanup_update_artifacts)
+    QTimer.singleShot(10000, _cleanup_update_artifacts)
 
     return qt.exec()
 
