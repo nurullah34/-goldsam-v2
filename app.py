@@ -1,5 +1,6 @@
 import socket
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import Qt, QLocale, QTimer
@@ -14,8 +15,12 @@ from core.mt5_connector import MT5Connector
 from core.position_monitor import PositionMonitor
 from core.strategy_engine import StrategyEngine
 from core.trade_executor import TradeExecutor
+from core.updater import check_and_update
 from strategies.dengeli_8t import Dengeli8T
 from version import VERSION, APP_NAME
+
+
+BASE_DIR = Path(__file__).resolve().parent
 
 
 DOT_OFF = "#8b949e"
@@ -417,6 +422,19 @@ class MainWindow(QMainWindow):
         cid = self._kasa_trail_group.checkedId()
         return float(cid) if cid >= 1 else 1.0
 
+    def _check_update(self) -> None:
+        """Güncelle butonu — GitHub'dan en son sürümü kontrol et + uygula."""
+        # Bot çalışıyorsa önce durdur (yoksa dosyalar locked olur)
+        if self.worker is not None and self.worker.isRunning():
+            self._log_msg("Önce botu durduruyorum (güncelleme için)...")
+            self.worker.stop()
+            self.worker.wait(8000)
+
+        result = check_and_update(BASE_DIR, VERSION, self._log_msg)
+        if result is True:
+            self._log_msg("Güncelleme başlatıldı, pencere 3 saniye içinde kapanacak.")
+            QTimer.singleShot(2500, self.close)
+
     # ─── UI BUILD ─────────────────────────────────────────────
     def _build_top_status(self) -> QFrame:
         frame = QFrame()
@@ -595,7 +613,7 @@ class MainWindow(QMainWindow):
         update_btn = QPushButton("Güncelle")
         update_btn.setObjectName("UpdateBtn")
         update_btn.setMinimumHeight(36)
-        update_btn.clicked.connect(lambda: self._log_msg("Güncelle — sonraki sürümlerde aktif olacak."))
+        update_btn.clicked.connect(self._check_update)
         h.addWidget(update_btn)
 
         exit_btn = QPushButton("Çıkış")
