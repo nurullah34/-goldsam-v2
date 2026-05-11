@@ -794,7 +794,9 @@ class MainWindow(QMainWindow):
         return h
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        # Açık pozisyon uyarısı (bot çalışıyorken kullanıcı X'e basarsa)
         if self.worker is not None and self.worker.isRunning():
+            self._log_msg("👋 Pencere kapanıyor — bot durduruluyor, açık pozisyonlar broker'da kalır.")
             self.worker.stop()
             self.worker.wait(5000)
         if self.mt5.connected:
