@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.so
+
+# Build
+build/
+dist/
+*.egg-info/
+*.spec
+
+# Runtime
+.app.pid
+account.lock
+*.lock
+
+# Local config (kullanıcı kendine özel)
+config_local.json
+.env
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Claude session logs + lokal ayarlar
+.claude/
+
+# Geçici test dosyaları
+tmp_*.py
+test_*.py

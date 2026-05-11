@@ -1,0 +1,2 @@
+VERSION = "1.3.3"
+APP_NAME = "GOLDSAM V2"
