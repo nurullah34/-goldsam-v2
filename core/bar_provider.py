@@ -66,6 +66,10 @@ def fetch_bars(symbol: str, timeframe: str, count: int = 200) -> list[dict]:
             vol = int(r["tick_volume"])
         except (ValueError, KeyError, IndexError):
             vol = 0
+        try:
+            spr = int(r["spread"])
+        except (ValueError, KeyError, IndexError):
+            spr = 0
         bars.append({
             "time":   t.strftime("%Y-%m-%dT%H:%M:%S"),
             "open":   float(r["open"]),
@@ -73,5 +77,6 @@ def fetch_bars(symbol: str, timeframe: str, count: int = 200) -> list[dict]:
             "low":    float(r["low"]),
             "close":  float(r["close"]),
             "volume": vol,
+            "spread": spr,  # point cinsi (1 pt = 0.01 USD altın için)
         })
     return bars

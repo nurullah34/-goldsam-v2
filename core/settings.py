@@ -27,6 +27,7 @@ DEFAULTS: dict[str, Any] = {
         "8t_short":    deepcopy(_DEFAULT_STRAT),
         "multi100":    deepcopy(_DEFAULT_STRAT),
         "micro_sweep": deepcopy(_DEFAULT_STRAT),
+        "goldsell":    deepcopy(_DEFAULT_STRAT),
     },
     "kasa": {
         "concurrent_limit":      999,    # 3 / 6 / 10 / 999=sınırsız

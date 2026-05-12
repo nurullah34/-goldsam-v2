@@ -23,6 +23,7 @@ from core.updater import check_and_update
 from strategies.dengeli_8t import Dengeli8T
 from strategies.multi100.strategy import Multi100Strategy
 from strategies.micro_sweep.strategy import MicroSweepStrategy
+from strategies.goldsell.strategy import GoldSellStrategy
 from version import VERSION, APP_NAME
 
 
@@ -181,9 +182,10 @@ class ReportDialog(QDialog):
         "8T":       {20270001, 20270002},
         "MULTI100": {20270011, 20270012, 20270013, 20270014},
         "MICRO-S":  set(range(20270101, 20270128)),
+        "GOLDSELL": {20270200},
     }
     GROUPS["Hepsi"] = (
-        GROUPS["8T"] | GROUPS["MULTI100"] | GROUPS["MICRO-S"]
+        GROUPS["8T"] | GROUPS["MULTI100"] | GROUPS["MICRO-S"] | GROUPS["GOLDSELL"]
     )
 
     @staticmethod
@@ -200,6 +202,7 @@ class ReportDialog(QDialog):
             if 1 <= off <= 11:  return f"MS-P{off:02d}"
             if 12 <= off <= 18: return f"MS-E{off-11:02d}"
             if 19 <= off <= 27: return f"MS-S{off-18:02d}"
+        if magic == 20270200: return "GOLDSELL"
         return f"#{magic}"
 
     def __init__(self, parent=None, default_period: int = 7,
@@ -284,7 +287,7 @@ class ReportDialog(QDialog):
         flt.addWidget(QLabel("Strateji:"))
         self.cb_group = QComboBox()
         # "Tümü" = bot + manuel, "Hepsi" = sadece bot, "Manuel" = sadece manuel
-        for gname in ("Tümü", "Hepsi (Bot)", "8T", "MULTI100", "MICRO-S", "Manuel"):
+        for gname in ("Tümü", "Hepsi (Bot)", "8T", "MULTI100", "MICRO-S", "GOLDSELL", "Manuel"):
             self.cb_group.addItem(gname)
         # default_group eski isimle gelirse uyumlu kal
         compat = {"Hepsi": "Hepsi (Bot)"}.get(default_group, default_group)
@@ -656,6 +659,7 @@ class MainWindow(QMainWindow):
         self.card_8t_short = StrategyCard("8T SHORT")
         self.card_multi = StrategyCard("MULTI100")
         self.card_micro = StrategyCard("MICRO-S")
+        self.card_goldsell = StrategyCard("GOLDSELL")
 
         # UI element referansları
         self._dot_mt5: Optional[QLabel] = None
@@ -673,6 +677,7 @@ class MainWindow(QMainWindow):
         self._stats_8t: Optional[QLabel] = None
         self._stats_multi: Optional[QLabel] = None
         self._stats_micro: Optional[QLabel] = None
+        self._stats_goldsell: Optional[QLabel] = None
         self._stats_manual: Optional[QLabel] = None
         self._stats_header: Optional[QLabel] = None
         self._stats_period_group: Optional[QButtonGroup] = None
@@ -892,6 +897,26 @@ class MainWindow(QMainWindow):
                     f"MICRO-S aktif | {symbol} | lot={smicro['lot']} SL=${smicro['sl_usd']}"
                 )
 
+        sgs = self.card_goldsell.settings()
+        if sgs["enabled"]:
+            if sgs["lot"] <= 0:
+                self._log_msg("GOLDSELL: lot 0 — strateji başlatılamadı.")
+            else:
+                strat = GoldSellStrategy(symbol=symbol)
+                strat.apply_settings(
+                    enabled=True,
+                    lot=sgs["lot"],
+                    sl_usd=sgs["sl_usd"],
+                    trail_activate_usd=trail,
+                    avg_threshold_usd=sgs["avg_threshold_usd"],
+                    avg_lot=sgs["avg_lot"],
+                )
+                self.engine.register(strat)
+                active_count += 1
+                self._log_msg(
+                    f"GOLDSELL aktif | {symbol} | lot={sgs['lot']} SL=${sgs['sl_usd']}"
+                )
+
         if active_count == 0:
             self._log_msg("Hiç strateji aktif değil — kartlardan en az 1 tane seç.")
             return
@@ -938,6 +963,7 @@ class MainWindow(QMainWindow):
         self.card_8t_short.load_settings(strats.get("8t_short", {}))
         self.card_multi.load_settings(strats.get("multi100", {}))
         self.card_micro.load_settings(strats.get("micro_sweep", {}))
+        self.card_goldsell.load_settings(strats.get("goldsell", {}))
 
         kasa = s.get("kasa", {})
         # Concurrent limit
@@ -972,6 +998,7 @@ class MainWindow(QMainWindow):
                 "8t_short":    self.card_8t_short.settings(),
                 "multi100":    self.card_multi.settings(),
                 "micro_sweep": self.card_micro.settings(),
+                "goldsell":    self.card_goldsell.settings(),
             },
             "kasa": {
                 "concurrent_limit":       self._kasa_concurrent_limit(),
@@ -1065,12 +1092,15 @@ class MainWindow(QMainWindow):
         top.addWidget(self.card_8t_short)
         v.addLayout(top)
 
-        # Alt satır: MULTI100 | Micro-Sweep
-        bot = QHBoxLayout()
-        bot.setSpacing(14)
-        bot.addWidget(self.card_multi)
-        bot.addWidget(self.card_micro)
-        v.addLayout(bot)
+        # Orta satır: MULTI100 | Micro-Sweep
+        mid = QHBoxLayout()
+        mid.setSpacing(14)
+        mid.addWidget(self.card_multi)
+        mid.addWidget(self.card_micro)
+        v.addLayout(mid)
+
+        # Alt satır: GoldSell (tek başına, tam genişlik)
+        v.addWidget(self.card_goldsell)
         return frame
 
     def _build_kasa_panel(self) -> QFrame:
@@ -1264,8 +1294,10 @@ class MainWindow(QMainWindow):
         self._stats_8t = QLabel("8T       :  —")
         self._stats_multi = QLabel("MULTI100 :  —")
         self._stats_micro = QLabel("MICRO-S  :  —")
+        self._stats_goldsell = QLabel("GOLDSELL :  —")
         self._stats_manual = QLabel("MANUEL   :  —")
-        for lbl in (self._stats_8t, self._stats_multi, self._stats_micro, self._stats_manual):
+        for lbl in (self._stats_8t, self._stats_multi, self._stats_micro,
+                    self._stats_goldsell, self._stats_manual):
             lbl.setObjectName("StatsRow")
             v.addWidget(lbl)
         return box
@@ -1338,8 +1370,9 @@ class MainWindow(QMainWindow):
             "8T":       {20270001, 20270002},
             "MULTI100": {20270011, 20270012, 20270013, 20270014},
             "MICRO-S":  set(range(20270101, 20270128)),
+            "GOLDSELL": {20270200},
         }
-        bot_all = groups["8T"] | groups["MULTI100"] | groups["MICRO-S"]
+        bot_all = groups["8T"] | groups["MULTI100"] | groups["MICRO-S"] | groups["GOLDSELL"]
         stats = {k: {"n": 0, "w": 0, "l": 0, "net": 0.0}
                  for k in list(groups.keys()) + ["MANUEL"]}
 
@@ -1387,6 +1420,8 @@ class MainWindow(QMainWindow):
             self._stats_multi.setText(_fmt("MULTI100", stats["MULTI100"]))
         if self._stats_micro is not None:
             self._stats_micro.setText(_fmt("MICRO-S", stats["MICRO-S"]))
+        if self._stats_goldsell is not None:
+            self._stats_goldsell.setText(_fmt("GOLDSELL", stats["GOLDSELL"]))
         if self._stats_manual is not None:
             self._stats_manual.setText(_fmt("MANUEL", stats["MANUEL"]))
 
