@@ -283,7 +283,7 @@ class MainWindow(QMainWindow):
         self.card_8t_long = StrategyCard("8T LONG")
         self.card_8t_short = StrategyCard("8T SHORT")
         self.card_multi = StrategyCard("MULTI100")
-        self.card_micro = StrategyCard("Micro-Sweep")
+        self.card_micro = StrategyCard("MICRO-S")
 
         # UI element referansları
         self._dot_mt5: Optional[QLabel] = None
