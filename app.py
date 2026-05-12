@@ -188,6 +188,7 @@ class ReportDialog(QDialog):
 
     @staticmethod
     def _strategy_name(magic: int) -> str:
+        if magic == 0:        return "MANUEL"
         if magic == 20270001: return "8T LONG"
         if magic == 20270002: return "8T SHORT"
         if magic == 20270011: return "MULTI100 M30"
@@ -282,11 +283,15 @@ class ReportDialog(QDialog):
 
         flt.addWidget(QLabel("Strateji:"))
         self.cb_group = QComboBox()
-        for gname in ("Hepsi", "8T", "MULTI100", "MICRO-S"):
+        # "Tümü" = bot + manuel, "Hepsi" = sadece bot, "Manuel" = sadece manuel
+        for gname in ("Tümü", "Hepsi (Bot)", "8T", "MULTI100", "MICRO-S", "Manuel"):
             self.cb_group.addItem(gname)
-        idx = self.cb_group.findText(default_group)
-        if idx >= 0:
-            self.cb_group.setCurrentIndex(idx)
+        # default_group eski isimle gelirse uyumlu kal
+        compat = {"Hepsi": "Hepsi (Bot)"}.get(default_group, default_group)
+        idx = self.cb_group.findText(compat)
+        if idx < 0:
+            idx = self.cb_group.findText("Tümü")
+        self.cb_group.setCurrentIndex(max(idx, 0))
         flt.addWidget(self.cb_group)
 
         flt.addSpacing(20)
@@ -384,12 +389,26 @@ class ReportDialog(QDialog):
         DIM   = QColor("#8b949e")
 
         gname = self.cb_group.currentText()
-        magics = self.GROUPS.get(gname, set())
+        bot_magics = self.GROUPS["Hepsi"]  # tüm bot magics
+
+        def _accept(mg: int) -> bool:
+            if gname == "Tümü":
+                return True
+            if gname == "Hepsi (Bot)":
+                return mg in bot_magics
+            if gname == "Manuel":
+                return mg not in bot_magics  # bot dışı her şey (genelde magic=0)
+            # Belirli grup (8T / MULTI100 / MICRO-S)
+            return mg in self.GROUPS.get(gname, set())
+
         start, label = self._period_range()
         now = int(_time.time())
 
+        # Geniş aralık çek (entry ile exit farklı günlerde olabilir) — sonra filtrele
         try:
-            deals = mt5_mod.history_deals_get(start, now + 60)
+            deals = mt5_mod.history_deals_get(
+                max(0, start - 86400 * 7), now + 60
+            )
         except Exception:
             deals = None
         if deals is None:
@@ -403,7 +422,7 @@ class ReportDialog(QDialog):
 
         for d in deals:
             mg = int(getattr(d, "magic", 0) or 0)
-            if mg not in magics:
+            if not _accept(mg):
                 continue
             try:
                 pid = int(d.position_id)
@@ -437,9 +456,16 @@ class ReportDialog(QDialog):
                 + float(getattr(d, "swap", 0) or 0)
             )
 
+        # Period başlangıç/bitiş datetime (local TZ-naive)
+        period_start_dt = datetime.fromtimestamp(start)
+        period_end_dt = datetime.fromtimestamp(now + 60)
+
         trades = []
         for pid, rec in per_pos.items():
             if rec["entry"] is None or rec["exit"] is None:
+                continue
+            # Kapanış zamanı periyod içinde olmalı (genel beklenti)
+            if not (period_start_dt <= rec["exit"] <= period_end_dt):
                 continue
             trades.append({
                 "pid": pid,
@@ -650,6 +676,7 @@ class MainWindow(QMainWindow):
         self._stats_8t: Optional[QLabel] = None
         self._stats_multi: Optional[QLabel] = None
         self._stats_micro: Optional[QLabel] = None
+        self._stats_manual: Optional[QLabel] = None
         self._stats_header: Optional[QLabel] = None
         self._stats_period_group: Optional[QButtonGroup] = None
         self._varlik_label: Optional[QLabel] = None
@@ -1240,7 +1267,8 @@ class MainWindow(QMainWindow):
         self._stats_8t = QLabel("8T       :  —")
         self._stats_multi = QLabel("MULTI100 :  —")
         self._stats_micro = QLabel("MICRO-S  :  —")
-        for lbl in (self._stats_8t, self._stats_multi, self._stats_micro):
+        self._stats_manual = QLabel("MANUEL   :  —")
+        for lbl in (self._stats_8t, self._stats_multi, self._stats_micro, self._stats_manual):
             lbl.setObjectName("StatsRow")
             v.addWidget(lbl)
         return box
@@ -1314,7 +1342,9 @@ class MainWindow(QMainWindow):
             "MULTI100": {20270011, 20270012, 20270013, 20270014},
             "MICRO-S":  set(range(20270101, 20270128)),
         }
-        stats = {k: {"n": 0, "w": 0, "l": 0, "net": 0.0} for k in groups}
+        bot_all = groups["8T"] | groups["MULTI100"] | groups["MICRO-S"]
+        stats = {k: {"n": 0, "w": 0, "l": 0, "net": 0.0}
+                 for k in list(groups.keys()) + ["MANUEL"]}
 
         for d in deals:
             try:
@@ -1323,18 +1353,25 @@ class MainWindow(QMainWindow):
             except Exception:
                 continue
             mg = int(getattr(d, "magic", 0) or 0)
-            for gname, gset in groups.items():
-                if mg in gset:
-                    pnl = (float(getattr(d, "profit", 0) or 0)
-                           + float(getattr(d, "commission", 0) or 0)
-                           + float(getattr(d, "swap", 0) or 0))
-                    stats[gname]["n"] += 1
-                    stats[gname]["net"] += pnl
-                    if pnl > 0.001:
-                        stats[gname]["w"] += 1
-                    elif pnl < -0.001:
-                        stats[gname]["l"] += 1
-                    break
+            pnl = (float(getattr(d, "profit", 0) or 0)
+                   + float(getattr(d, "commission", 0) or 0)
+                   + float(getattr(d, "swap", 0) or 0))
+            target = None
+            if mg in bot_all:
+                for gname, gset in groups.items():
+                    if mg in gset:
+                        target = gname
+                        break
+            else:
+                target = "MANUEL"
+            if target is None:
+                continue
+            stats[target]["n"] += 1
+            stats[target]["net"] += pnl
+            if pnl > 0.001:
+                stats[target]["w"] += 1
+            elif pnl < -0.001:
+                stats[target]["l"] += 1
 
         def _fmt(gname: str, s: dict) -> str:
             head = f"{gname:<8s} :"
@@ -1354,6 +1391,8 @@ class MainWindow(QMainWindow):
             self._stats_multi.setText(_fmt("MULTI100", stats["MULTI100"]))
         if self._stats_micro is not None:
             self._stats_micro.setText(_fmt("MICRO-S", stats["MICRO-S"]))
+        if self._stats_manual is not None:
+            self._stats_manual.setText(_fmt("MANUEL", stats["MANUEL"]))
 
     def closeEvent(self, event) -> None:  # noqa: N802
         # Açık pozisyon uyarısı (bot çalışıyorken kullanıcı X'e basarsa)
