@@ -179,7 +179,8 @@ class StrategyCard(QFrame):
     def __init__(self, title: str, parent=None) -> None:
         super().__init__(parent)
         self.setObjectName("StratCard")
-        self.setMinimumHeight(110)
+        # 4 kart birebir aynı boyutta görünsün — fixed height
+        self.setFixedHeight(115)
 
         self.chk = QCheckBox(title)
         self.chk.setObjectName("StratCheckbox")
