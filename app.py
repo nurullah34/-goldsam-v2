@@ -678,11 +678,12 @@ class MainWindow(QMainWindow):
         top.addWidget(self.card_8t_short)
         v.addLayout(top)
 
-        # MULTI100 (tek başına, tam genişlik)
-        v.addWidget(self.card_multi)
-
-        # Micro-Sweep (tek başına, tam genişlik)
-        v.addWidget(self.card_micro)
+        # Alt satır: MULTI100 | Micro-Sweep
+        bot = QHBoxLayout()
+        bot.setSpacing(14)
+        bot.addWidget(self.card_multi)
+        bot.addWidget(self.card_micro)
+        v.addLayout(bot)
         return frame
 
     def _build_kasa_panel(self) -> QFrame:
