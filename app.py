@@ -195,10 +195,16 @@ class ReportDialog(QDialog):
             QDialog { background-color: #0d1117; }
             QTableWidget {
                 background-color: #161b22;
+                alternate-background-color: #1c2128;
                 gridline-color: #30363d;
                 color: #e6edf3;
                 font-family: 'Consolas','Courier New',monospace;
                 selection-background-color: #1f6feb;
+                selection-color: #ffffff;
+            }
+            QTableCornerButton::section {
+                background-color: #21262d;
+                border: 1px solid #30363d;
             }
             QHeaderView::section {
                 background-color: #21262d;
@@ -215,6 +221,40 @@ class ReportDialog(QDialog):
                 color: #e6edf3;
                 min-width: 120px;
             }
+            QComboBox:hover { border-color: #58a6ff; }
+            QComboBox::drop-down {
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 22px;
+                border-left: 1px solid #30363d;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #161b22;
+                color: #e6edf3;
+                selection-background-color: #1f6feb;
+                selection-color: #ffffff;
+                border: 1px solid #30363d;
+                outline: 0;
+            }
+            QComboBox QAbstractItemView::item {
+                min-height: 24px;
+                padding: 4px 8px;
+            }
+            QComboBox QAbstractItemView::item:hover {
+                background-color: #21262d;
+            }
+            QScrollBar:vertical {
+                background-color: #0d1117;
+                width: 12px;
+                border: none;
+            }
+            QScrollBar::handle:vertical {
+                background-color: #30363d;
+                min-height: 24px;
+                border-radius: 6px;
+            }
+            QScrollBar::handle:vertical:hover { background-color: #484f58; }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
         """)
 
         root = QVBoxLayout(self)
@@ -366,6 +406,11 @@ class ReportDialog(QDialog):
             f"{total['w']}W  {total['l']}L  |  Net {sign}${total['net']:,.2f}  |  WR %{wr:.2f}"
         )
 
+        from PySide6.QtGui import QColor
+        GREEN = QColor("#3fb950")
+        RED   = QColor("#f85149")
+        DIM   = QColor("#6e7681")
+
         # Tablo doldur
         def _fill(row: int, s: dict) -> None:
             n = s["n"]
@@ -381,17 +426,21 @@ class ReportDialog(QDialog):
             for col, val in enumerate(items):
                 it = QTableWidgetItem(val)
                 it.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                # Renk: Net pozitifse yeşil, negatifse kırmızı (Net sütununda)
-                if col == 3 and n > 0:
-                    if s["net"] > 0:
-                        it.setForeground(Qt.GlobalColor.green)
-                    elif s["net"] < 0:
-                        it.setForeground(Qt.GlobalColor.red)
-                if col == 4 and n > 0:
-                    if wrh >= 90:
-                        it.setForeground(Qt.GlobalColor.green)
-                    elif wrh < 60:
-                        it.setForeground(Qt.GlobalColor.red)
+                if n == 0:
+                    it.setForeground(DIM)
+                else:
+                    # Net sütunu
+                    if col == 3:
+                        if s["net"] > 0:
+                            it.setForeground(GREEN)
+                        elif s["net"] < 0:
+                            it.setForeground(RED)
+                    # WR sütunu
+                    if col == 4:
+                        if wrh >= 90:
+                            it.setForeground(GREEN)
+                        elif wrh < 60:
+                            it.setForeground(RED)
                 self.table.setItem(row, col, it)
 
         for h in range(24):
