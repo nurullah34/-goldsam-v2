@@ -184,6 +184,8 @@ class StrategyCard(QFrame):
 
         self.chk = QCheckBox(title)
         self.chk.setObjectName("StratCheckbox")
+        # Sabit genişlik — 4 kart hizalansın (en uzun başlık MULTI100)
+        self.chk.setMinimumWidth(110)
 
         self.lot_input = _spin(0.00, 100.00, 0.01, 0.00)
         self.sl_input = _spin(0.00, 10000.00, 5.00, 0.00)
@@ -197,7 +199,13 @@ class StrategyCard(QFrame):
         h.setContentsMargins(14, 10, 14, 10)
         h.setSpacing(14)
 
-        h.addWidget(self.chk, alignment=Qt.AlignmentFlag.AlignVCenter)
+        # Chk vertical-center'a zorlanır (stretch'li wrapper)
+        chk_wrap = QVBoxLayout()
+        chk_wrap.setContentsMargins(0, 0, 0, 0)
+        chk_wrap.addStretch(1)
+        chk_wrap.addWidget(self.chk)
+        chk_wrap.addStretch(1)
+        h.addLayout(chk_wrap)
         h.addSpacing(12)
 
         left = QVBoxLayout()
@@ -215,6 +223,7 @@ class StrategyCard(QFrame):
         right = QVBoxLayout(avg_box)
         right.setContentsMargins(10, 8, 10, 8)
         right.setSpacing(6)
+        right.addStretch(1)
 
         avg_label = QLabel("Açılan işlemden kaç dolar düşerse bir işlem daha açılsın:")
         avg_label.setObjectName("FieldLabel")
@@ -235,6 +244,7 @@ class StrategyCard(QFrame):
         radio_row.addWidget(self.avg_lot_input)
         radio_row.addStretch(1)
         right.addLayout(radio_row)
+        right.addStretch(1)
 
         h.addWidget(avg_box, stretch=1)
 
