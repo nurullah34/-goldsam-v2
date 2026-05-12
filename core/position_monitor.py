@@ -35,6 +35,10 @@ class PositionMonitor:
         self.manage_manual_positions: bool = False
         self._known_tickets: set[int] = set()
         self._silent_warned: bool = False  # market kapalı uyarısı spam önleyici
+        # Kapanmış ama P/L'i MT5 history'sine henüz düşmemiş ticket'lar için retry
+        # {ticket: attempts_left}
+        self._pending_closes: dict[int, int] = {}
+        self._MAX_PENDING_RETRIES = 6  # ~30 sn (6 × 5 sn tick)
 
     # ─── Ayar setter'ları ─────────────────────────────────────
     def set_trail_activate(self, usd: float) -> None:
@@ -97,12 +101,35 @@ class PositionMonitor:
         for t in closed:
             pnl = self._fetch_close_profit(t)
             if pnl is None:
-                self.log(f"📤 Pozisyon kapandı #{t}")
+                # MT5 deal henüz history'e düşmedi — pending kuyruğuna al, sonra dene
+                self._pending_closes[t] = self._MAX_PENDING_RETRIES
             else:
-                sign = "+" if pnl >= 0 else ""
-                emoji = "💰" if pnl > 0 else ("💸" if pnl < -0.001 else "📤")
-                self.log(f"{emoji} Pozisyon kapandı #{t}  P/L: {sign}${pnl:.2f}")
+                self._log_close(t, pnl)
         self._known_tickets = live_tickets
+
+        # Pending kapanmaları yeniden dene
+        if self._pending_closes:
+            resolved: list[int] = []
+            for t, left in list(self._pending_closes.items()):
+                pnl = self._fetch_close_profit(t)
+                if pnl is not None:
+                    self._log_close(t, pnl)
+                    resolved.append(t)
+                else:
+                    left -= 1
+                    if left <= 0:
+                        # 30 sn'de hâlâ deal yok — sessizce kapandı diye logla
+                        self.log(f"📤 Pozisyon kapandı #{t}  (P/L history'e düşmedi)")
+                        resolved.append(t)
+                    else:
+                        self._pending_closes[t] = left
+            for t in resolved:
+                self._pending_closes.pop(t, None)
+
+    def _log_close(self, ticket: int, pnl: float) -> None:
+        sign = "+" if pnl >= 0 else ""
+        emoji = "💰" if pnl > 0 else ("💸" if pnl < -0.001 else "📤")
+        self.log(f"{emoji} Pozisyon kapandı #{ticket}  P/L: {sign}${pnl:.2f}")
 
     def _fetch_close_profit(self, ticket: int) -> Optional[float]:
         """history_deals_get ile kapanış deal'larını bul, net P/L döndür.
