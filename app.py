@@ -179,8 +179,8 @@ class StrategyCard(QFrame):
     def __init__(self, title: str, parent=None) -> None:
         super().__init__(parent)
         self.setObjectName("StratCard")
-        # 4 kart birebir aynı boyutta görünsün — fixed height
-        self.setFixedHeight(115)
+        # 4 kart birebir aynı boyutta görünsün — fixed height (wrapped text dahil)
+        self.setFixedHeight(130)
 
         self.chk = QCheckBox(title)
         self.chk.setObjectName("StratCheckbox")
@@ -202,8 +202,10 @@ class StrategyCard(QFrame):
 
         left = QVBoxLayout()
         left.setSpacing(6)
+        left.addStretch(1)
         left.addLayout(_field_row("Lot:", self.lot_input))
         left.addLayout(_field_row("SL ($):", self.sl_input))
+        left.addStretch(1)
         h.addLayout(left)
 
         h.addSpacing(16)
