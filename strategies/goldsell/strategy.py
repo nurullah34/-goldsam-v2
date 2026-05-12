@@ -48,7 +48,7 @@ class GoldSellStrategy(Strategy):
     def __init__(self, symbol: str = "GOLD#", config: dict = MEGA_B_CONFIG) -> None:
         self.symbols = [symbol]
         self.key = "goldsell"
-        self.display = "GOLDSELL"
+        self.display = "GOLDS"
         self.magic = MAGIC
         self._config = config
         self._last_bar_time: Optional[str] = None
