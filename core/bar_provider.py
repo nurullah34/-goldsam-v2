@@ -42,7 +42,7 @@ _init_tf_map()
 def fetch_bars(symbol: str, timeframe: str, count: int = 200) -> list[dict]:
     """Son ``count`` adet bar'ı OHLCV dict listesi olarak döndür.
 
-    Strateji formatı: ``{"time": ISO-str, "open", "high", "low", "close"}``
+    Strateji formatı: ``{"time": ISO-str, "open", "high", "low", "close", "volume"}``
     """
     if mt5 is None:
         return []
@@ -61,11 +61,17 @@ def fetch_bars(symbol: str, timeframe: str, count: int = 200) -> list[dict]:
     bars: list[dict] = []
     for r in rates:
         t = datetime.fromtimestamp(int(r["time"]), tz=timezone.utc)
+        # tick_volume olmayabilir (eski TF veya broker eksikliği) — defensive 0
+        try:
+            vol = int(r["tick_volume"])
+        except (ValueError, KeyError, IndexError):
+            vol = 0
         bars.append({
-            "time":  t.strftime("%Y-%m-%dT%H:%M:%S"),
-            "open":  float(r["open"]),
-            "high":  float(r["high"]),
-            "low":   float(r["low"]),
-            "close": float(r["close"]),
+            "time":   t.strftime("%Y-%m-%dT%H:%M:%S"),
+            "open":   float(r["open"]),
+            "high":   float(r["high"]),
+            "low":    float(r["low"]),
+            "close":  float(r["close"]),
+            "volume": vol,
         })
     return bars

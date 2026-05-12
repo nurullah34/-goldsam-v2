@@ -21,6 +21,7 @@ from core.trade_executor import TradeExecutor
 from core.updater import check_and_update
 from strategies.dengeli_8t import Dengeli8T
 from strategies.multi100.strategy import Multi100Strategy
+from strategies.micro_sweep.strategy import MicroSweepStrategy
 from version import VERSION, APP_NAME
 
 
@@ -279,6 +280,7 @@ class MainWindow(QMainWindow):
         self.card_8t_long = StrategyCard("8T LONG")
         self.card_8t_short = StrategyCard("8T SHORT")
         self.card_multi = StrategyCard("MULTI100")
+        self.card_micro = StrategyCard("Micro-Sweep")
 
         # UI element referansları
         self._dot_mt5: Optional[QLabel] = None
@@ -482,6 +484,27 @@ class MainWindow(QMainWindow):
                     f"| {symbol} | lot={smulti['lot']} SL=${smulti['sl_usd']}"
                 )
 
+        smicro = self.card_micro.settings()
+        if smicro["enabled"]:
+            if smicro["lot"] <= 0:
+                self._log_msg("Micro-Sweep: lot 0 — strateji başlatılamadı.")
+            else:
+                strat = MicroSweepStrategy(symbol=symbol)
+                strat.apply_settings(
+                    enabled=True,
+                    lot=smicro["lot"],
+                    sl_usd=smicro["sl_usd"],
+                    trail_activate_usd=trail,
+                    avg_threshold_usd=smicro["avg_threshold_usd"],
+                    avg_lot=smicro["avg_lot"],
+                )
+                self.engine.register(strat)
+                active_count += 1
+                self._log_msg(
+                    f"Micro-Sweep aktif | 27 modül (11 PERFECT + 7 ELITE + 9 STRONG) | "
+                    f"BUY-only | {symbol} | lot={smicro['lot']} SL=${smicro['sl_usd']}"
+                )
+
         if active_count == 0:
             self._log_msg("Hiç strateji aktif değil — kartlardan en az 1 tane seç.")
             return
@@ -527,6 +550,7 @@ class MainWindow(QMainWindow):
         self.card_8t_long.load_settings(strats.get("8t_long", {}))
         self.card_8t_short.load_settings(strats.get("8t_short", {}))
         self.card_multi.load_settings(strats.get("multi100", {}))
+        self.card_micro.load_settings(strats.get("micro_sweep", {}))
 
         kasa = s.get("kasa", {})
         # Concurrent limit
@@ -557,9 +581,10 @@ class MainWindow(QMainWindow):
         data = {
             "version": 1,
             "strategies": {
-                "8t_long":  self.card_8t_long.settings(),
-                "8t_short": self.card_8t_short.settings(),
-                "multi100": self.card_multi.settings(),
+                "8t_long":     self.card_8t_long.settings(),
+                "8t_short":    self.card_8t_short.settings(),
+                "multi100":    self.card_multi.settings(),
+                "micro_sweep": self.card_micro.settings(),
             },
             "kasa": {
                 "concurrent_limit":       self._kasa_concurrent_limit(),
@@ -652,8 +677,11 @@ class MainWindow(QMainWindow):
         top.addWidget(self.card_8t_short)
         v.addLayout(top)
 
-        # Alt satır: MULTI100 (tek başına, tam genişlik)
+        # MULTI100 (tek başına, tam genişlik)
         v.addWidget(self.card_multi)
+
+        # Micro-Sweep (tek başına, tam genişlik)
+        v.addWidget(self.card_micro)
         return frame
 
     def _build_kasa_panel(self) -> QFrame:
