@@ -307,6 +307,12 @@ class MainWindow(QMainWindow):
         self._kasa_weekend_chk: Optional[QCheckBox] = None
         self._kasa_manuel_chk: Optional[QCheckBox] = None
         self._kasa_trail_group: Optional[QButtonGroup] = None
+        # Stats + varlık paneli
+        self._stats_8t: Optional[QLabel] = None
+        self._stats_multi: Optional[QLabel] = None
+        self._stats_micro: Optional[QLabel] = None
+        self._varlik_label: Optional[QLabel] = None
+        self._stats_timer: Optional[QTimer] = None
 
         root = QWidget()
         layout = QVBoxLayout(root)
@@ -317,12 +323,17 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._build_top_status())
         layout.addWidget(self._build_strategies_row())
         layout.addWidget(self._build_kasa_panel())
+        layout.addWidget(self._build_stats_panel())
         layout.addWidget(self._build_log_panel(), stretch=1)
         layout.addLayout(self._build_footer())
 
         # Önce kaydedilmiş ayarları yükle (UI dolsun)
         QTimer.singleShot(50, self._load_all_settings)
         QTimer.singleShot(400, self._try_connect_mt5)
+        # Varlık + stats periyodik yenile (2 sn)
+        self._stats_timer = QTimer(self)
+        self._stats_timer.timeout.connect(self._refresh_stats)
+        self._stats_timer.start(2000)
 
     # ─── log + status ─────────────────────────────────────────
     def _log_msg(self, text: str) -> None:
@@ -829,10 +840,124 @@ class MainWindow(QMainWindow):
         h.addWidget(exit_btn)
 
         h.addStretch(1)
-        varlik = QLabel("Varlık: —")
-        varlik.setStyleSheet("color: #8b949e; padding-right: 6px;")
-        h.addWidget(varlik)
+        self._varlik_label = QLabel("Varlık: —")
+        self._varlik_label.setStyleSheet(
+            "color: #e6edf3; padding-right: 6px; font-weight: 600;"
+        )
+        h.addWidget(self._varlik_label)
         return h
+
+    def _build_stats_panel(self) -> QFrame:
+        """3 strateji grubu için P/L analizi (8T toplam, MULTI100 toplam, MICRO-S toplam)."""
+        box = QFrame()
+        box.setObjectName("StatsPanel")
+        box.setStyleSheet(
+            "QFrame#StatsPanel { background-color: #161b22; border: 1px solid #30363d; "
+            "border-radius: 8px; } "
+            "QLabel#StatsRow { color: #c9d1d9; "
+            "font-family: 'Consolas','Courier New',monospace; font-size: 12px; "
+            "padding: 2px 6px; }"
+        )
+        v = QVBoxLayout(box)
+        v.setContentsMargins(10, 6, 10, 6)
+        v.setSpacing(2)
+
+        header = QLabel("📊 İşlem Analizi (son 30 gün)")
+        header.setStyleSheet(
+            "color: #58a6ff; font-weight: 600; padding: 2px 4px; font-size: 12px;"
+        )
+        v.addWidget(header)
+
+        self._stats_8t = QLabel("8T       :  —")
+        self._stats_multi = QLabel("MULTI100 :  —")
+        self._stats_micro = QLabel("MICRO-S  :  —")
+        for lbl in (self._stats_8t, self._stats_multi, self._stats_micro):
+            lbl.setObjectName("StatsRow")
+            v.addWidget(lbl)
+        return box
+
+    # ─── Periyodik stats + varlık yenileme ────────────────────
+    def _refresh_stats(self) -> None:
+        """2 sn'de bir: account_info'dan varlık + history_deals_get'ten 3 grup için P/L."""
+        try:
+            import MetaTrader5 as mt5_mod
+        except ImportError:
+            return
+        if not self.mt5.connected:
+            return
+
+        # Varlık (balance + equity + aktif kar)
+        try:
+            info = mt5_mod.account_info()
+        except Exception:
+            info = None
+        if info is not None and self._varlik_label is not None:
+            balance = float(info.balance)
+            equity = float(info.equity)
+            profit = float(info.profit)
+            sign = "+" if profit >= 0 else ""
+            color = "#3fb950" if profit > 0 else ("#f85149" if profit < -0.001 else "#e6edf3")
+            self._varlik_label.setText(
+                f"Bakiye: <b>${balance:,.2f}</b>  |  Sermaye: <b>${equity:,.2f}</b>  |  "
+                f"Açık: <span style='color: {color};'><b>{sign}${profit:,.2f}</b></span>"
+            )
+            self._varlik_label.setTextFormat(Qt.TextFormat.RichText)
+
+        # Son 30 günün kapanmış deal'ları
+        import time as _time
+        now = int(_time.time())
+        try:
+            deals = mt5_mod.history_deals_get(now - 86400 * 30, now + 60)
+        except Exception:
+            deals = None
+        if deals is None:
+            deals = []
+
+        groups = {
+            "8T":       {20270001, 20270002},
+            "MULTI100": {20270011, 20270012, 20270013, 20270014},
+            "MICRO-S":  set(range(20270101, 20270128)),
+        }
+        stats = {k: {"n": 0, "w": 0, "l": 0, "net": 0.0} for k in groups}
+
+        for d in deals:
+            try:
+                if d.entry not in (mt5_mod.DEAL_ENTRY_OUT, mt5_mod.DEAL_ENTRY_INOUT):
+                    continue
+            except Exception:
+                continue
+            mg = int(getattr(d, "magic", 0) or 0)
+            for gname, gset in groups.items():
+                if mg in gset:
+                    pnl = (float(getattr(d, "profit", 0) or 0)
+                           + float(getattr(d, "commission", 0) or 0)
+                           + float(getattr(d, "swap", 0) or 0))
+                    stats[gname]["n"] += 1
+                    stats[gname]["net"] += pnl
+                    if pnl > 0.001:
+                        stats[gname]["w"] += 1
+                    elif pnl < -0.001:
+                        stats[gname]["l"] += 1
+                    break
+
+        def _fmt(gname: str, s: dict) -> str:
+            head = f"{gname:<8s} :"
+            if s["n"] == 0:
+                return f"{head}  henüz işlem yok"
+            wr = 100.0 * s["w"] / s["n"]
+            sign = "+" if s["net"] >= 0 else ""
+            return (
+                f"{head}  {s['n']:>3d} işlem  |  "
+                f"{s['w']:>3d}W {s['l']:>3d}L  |  "
+                f"Net {sign}${s['net']:,.2f}  |  WR %{wr:5.1f}"
+            )
+
+        if self._stats_8t is not None:
+            self._stats_8t.setText(_fmt("8T", stats["8T"]))
+        if self._stats_multi is not None:
+            self._stats_multi.setText(_fmt("MULTI100", stats["MULTI100"]))
+        if self._stats_micro is not None:
+            self._stats_micro.setText(_fmt("MICRO-S", stats["MICRO-S"]))
 
     def closeEvent(self, event) -> None:  # noqa: N802
         # Açık pozisyon uyarısı (bot çalışıyorken kullanıcı X'e basarsa)
