@@ -7,7 +7,8 @@ from PySide6.QtCore import Qt, QLocale, QTimer
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame,
     QPushButton, QCheckBox, QDoubleSpinBox, QRadioButton, QButtonGroup,
-    QPlainTextEdit, QMessageBox
+    QPlainTextEdit, QMessageBox, QDialog, QTableWidget, QTableWidgetItem,
+    QComboBox, QHeaderView
 )
 
 from core import settings as user_settings
@@ -171,6 +172,239 @@ def _field_row(label_text: str, widget) -> QHBoxLayout:
     row.addWidget(widget)
     row.addStretch(1)
     return row
+
+
+class ReportDialog(QDialog):
+    """Saat bazlı detaylı işlem raporu — 24 saat × (İşlem, W, L, Net, WR%)."""
+
+    GROUPS = {
+        "8T":       {20270001, 20270002},
+        "MULTI100": {20270011, 20270012, 20270013, 20270014},
+        "MICRO-S":  set(range(20270101, 20270128)),
+    }
+    GROUPS["Hepsi"] = (
+        GROUPS["8T"] | GROUPS["MULTI100"] | GROUPS["MICRO-S"]
+    )
+
+    def __init__(self, parent=None, default_period: int = 7,
+                 default_group: str = "Hepsi") -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Detaylı İşlem Raporu — Saat Dağılımı")
+        self.resize(820, 720)
+        self.setStyleSheet(STYLE + """
+            QDialog { background-color: #0d1117; }
+            QTableWidget {
+                background-color: #161b22;
+                gridline-color: #30363d;
+                color: #e6edf3;
+                font-family: 'Consolas','Courier New',monospace;
+                selection-background-color: #1f6feb;
+            }
+            QHeaderView::section {
+                background-color: #21262d;
+                color: #c9d1d9;
+                padding: 4px;
+                border: 1px solid #30363d;
+                font-weight: 600;
+            }
+            QComboBox {
+                background-color: #0d1117;
+                border: 1px solid #30363d;
+                border-radius: 6px;
+                padding: 4px 8px;
+                color: #e6edf3;
+                min-width: 120px;
+            }
+        """)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(10)
+
+        # Filtre satırı
+        flt = QHBoxLayout()
+        flt.setSpacing(10)
+
+        flt.addWidget(QLabel("Strateji:"))
+        self.cb_group = QComboBox()
+        for gname in ("Hepsi", "8T", "MULTI100", "MICRO-S"):
+            self.cb_group.addItem(gname)
+        idx = self.cb_group.findText(default_group)
+        if idx >= 0:
+            self.cb_group.setCurrentIndex(idx)
+        flt.addWidget(self.cb_group)
+
+        flt.addSpacing(20)
+        flt.addWidget(QLabel("Periyod:"))
+        self.period_group = QButtonGroup(self)
+        period_options = [(1, "Bugün"), (7, "Bu Hafta"), (30, "Son 30 Gün"), (90, "Son 90 Gün")]
+        for pid, txt in period_options:
+            rb = QRadioButton(txt)
+            rb.setObjectName("AvgRadio")
+            if pid == default_period:
+                rb.setChecked(True)
+            self.period_group.addButton(rb, pid)
+            flt.addWidget(rb)
+
+        flt.addStretch(1)
+        refresh_btn = QPushButton("Yenile")
+        refresh_btn.clicked.connect(self._refresh)
+        flt.addWidget(refresh_btn)
+        root.addLayout(flt)
+
+        # Başlık + özet
+        self.summary_lbl = QLabel("—")
+        self.summary_lbl.setStyleSheet(
+            "color: #58a6ff; font-weight: 600; padding: 4px;"
+        )
+        root.addWidget(self.summary_lbl)
+
+        # 24 saat × 5 kolon tablo
+        self.table = QTableWidget(25, 5, self)  # 24 saat + TOPLAM
+        self.table.setHorizontalHeaderLabels(["İşlem", "W (Kazanç)", "L (Kayıp)", "Net $", "WR %"])
+        self.table.setVerticalHeaderLabels(
+            [f"{h:02d}:00" for h in range(24)] + ["TOPLAM"]
+        )
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table.verticalHeader().setDefaultSectionSize(24)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.setAlternatingRowColors(True)
+        root.addWidget(self.table, stretch=1)
+
+        # Buttonlar — yenile + kapat
+        btn_row = QHBoxLayout()
+        btn_row.addStretch(1)
+        close_btn = QPushButton("Kapat")
+        close_btn.clicked.connect(self.accept)
+        btn_row.addWidget(close_btn)
+        root.addLayout(btn_row)
+
+        # Auto-refresh on selector change
+        self.cb_group.currentTextChanged.connect(lambda _: self._refresh())
+        self.period_group.idToggled.connect(
+            lambda _id, checked: checked and self._refresh()
+        )
+
+        # İlk yükleme
+        self._refresh()
+
+    def _period_range(self) -> tuple[int, str]:
+        import time as _time
+        pid = self.period_group.checkedId()
+        now = int(_time.time())
+        if pid == 1:
+            today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            return int(today.timestamp()), "Bugün"
+        elif pid == 30:
+            return now - 86400 * 30, "Son 30 Gün"
+        elif pid == 90:
+            return now - 86400 * 90, "Son 90 Gün"
+        else:
+            now_dt = datetime.now()
+            monday = now_dt - timedelta(days=now_dt.weekday())
+            monday = monday.replace(hour=0, minute=0, second=0, microsecond=0)
+            return int(monday.timestamp()), "Bu Hafta"
+
+    def _refresh(self) -> None:
+        try:
+            import MetaTrader5 as mt5_mod
+        except ImportError:
+            self.summary_lbl.setText("MT5 modülü yok.")
+            return
+
+        import time as _time
+        gname = self.cb_group.currentText()
+        magics = self.GROUPS.get(gname, set())
+        start, label = self._period_range()
+        now = int(_time.time())
+
+        try:
+            deals = mt5_mod.history_deals_get(start, now + 60)
+        except Exception:
+            deals = None
+        if deals is None:
+            deals = []
+
+        # Saat bazlı agreasyon
+        hours: dict[int, dict] = {h: {"n": 0, "w": 0, "l": 0, "net": 0.0} for h in range(24)}
+        total = {"n": 0, "w": 0, "l": 0, "net": 0.0}
+
+        for d in deals:
+            try:
+                if d.entry not in (mt5_mod.DEAL_ENTRY_OUT, mt5_mod.DEAL_ENTRY_INOUT):
+                    continue
+            except Exception:
+                continue
+            mg = int(getattr(d, "magic", 0) or 0)
+            if mg not in magics:
+                continue
+            # Deal time = broker server time, saatini al
+            try:
+                t = datetime.fromtimestamp(int(d.time))
+                h = t.hour
+            except Exception:
+                continue
+            pnl = (float(getattr(d, "profit", 0) or 0)
+                   + float(getattr(d, "commission", 0) or 0)
+                   + float(getattr(d, "swap", 0) or 0))
+            hours[h]["n"] += 1
+            hours[h]["net"] += pnl
+            total["n"] += 1
+            total["net"] += pnl
+            if pnl > 0.001:
+                hours[h]["w"] += 1
+                total["w"] += 1
+            elif pnl < -0.001:
+                hours[h]["l"] += 1
+                total["l"] += 1
+
+        # Özet başlık
+        wr = (100.0 * total["w"] / total["n"]) if total["n"] > 0 else 0.0
+        sign = "+" if total["net"] >= 0 else ""
+        self.summary_lbl.setText(
+            f"📊 {gname} — {label}  |  {total['n']} işlem  |  "
+            f"{total['w']}W  {total['l']}L  |  Net {sign}${total['net']:,.2f}  |  WR %{wr:.2f}"
+        )
+
+        # Tablo doldur
+        def _fill(row: int, s: dict) -> None:
+            n = s["n"]
+            wrh = (100.0 * s["w"] / n) if n > 0 else 0.0
+            sgn = "+" if s["net"] >= 0 else ""
+            items = [
+                str(n) if n > 0 else "—",
+                str(s["w"]) if n > 0 else "—",
+                str(s["l"]) if n > 0 else "—",
+                f"{sgn}${s['net']:,.2f}" if n > 0 else "—",
+                f"%{wrh:.1f}" if n > 0 else "—",
+            ]
+            for col, val in enumerate(items):
+                it = QTableWidgetItem(val)
+                it.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                # Renk: Net pozitifse yeşil, negatifse kırmızı (Net sütununda)
+                if col == 3 and n > 0:
+                    if s["net"] > 0:
+                        it.setForeground(Qt.GlobalColor.green)
+                    elif s["net"] < 0:
+                        it.setForeground(Qt.GlobalColor.red)
+                if col == 4 and n > 0:
+                    if wrh >= 90:
+                        it.setForeground(Qt.GlobalColor.green)
+                    elif wrh < 60:
+                        it.setForeground(Qt.GlobalColor.red)
+                self.table.setItem(row, col, it)
+
+        for h in range(24):
+            _fill(h, hours[h])
+        _fill(24, total)
+
+        # TOPLAM satırını bold yap
+        for col in range(5):
+            it = self.table.item(24, col)
+            if it is not None:
+                f = it.font()
+                f.setBold(True)
+                it.setFont(f)
 
 
 class StrategyCard(QFrame):
@@ -886,6 +1120,16 @@ class MainWindow(QMainWindow):
         self._stats_period_group.idToggled.connect(
             lambda _id, checked: checked and self._refresh_stats()
         )
+        # Detaylı rapor butonu (saat dağılımı)
+        report_btn = QPushButton("📋 Detaylı Rapor")
+        report_btn.setStyleSheet(
+            "QPushButton { background-color: #21262d; border: 1px solid #30363d; "
+            "border-radius: 4px; padding: 3px 10px; color: #c9d1d9; font-weight: 600; } "
+            "QPushButton:hover { background-color: #30363d; border-color: #58a6ff; }"
+        )
+        report_btn.clicked.connect(self._open_report_dialog)
+        top.addSpacing(8)
+        top.addWidget(report_btn)
         v.addLayout(top)
 
         self._stats_8t = QLabel("8T       :  —")
@@ -895,6 +1139,12 @@ class MainWindow(QMainWindow):
             lbl.setObjectName("StatsRow")
             v.addWidget(lbl)
         return box
+
+    def _open_report_dialog(self) -> None:
+        """Detaylı saat dağılımı raporunu aç."""
+        pid = self._stats_period_group.checkedId() if self._stats_period_group else 7
+        dlg = ReportDialog(self, default_period=pid, default_group="Hepsi")
+        dlg.exec()
 
     def _stats_period_range(self) -> tuple[int, str]:
         """Seçilen periyod için (start_unix, label) döner."""
