@@ -450,11 +450,8 @@ class ReportDialog(QDialog):
                 if rec["exit"] is None or t > rec["exit"]:
                     rec["exit"] = t
 
-            rec["pnl_sum"] += (
-                float(getattr(d, "profit", 0) or 0)
-                + float(getattr(d, "commission", 0) or 0)
-                + float(getattr(d, "swap", 0) or 0)
-            )
+            # MT5 "Profit" kolonu ile birebir olsun: sadece profit (komisyon + swap hariç)
+            rec["pnl_sum"] += float(getattr(d, "profit", 0) or 0)
 
         # Period başlangıç/bitiş datetime (local TZ-naive)
         period_start_dt = datetime.fromtimestamp(start)
@@ -1353,9 +1350,8 @@ class MainWindow(QMainWindow):
             except Exception:
                 continue
             mg = int(getattr(d, "magic", 0) or 0)
-            pnl = (float(getattr(d, "profit", 0) or 0)
-                   + float(getattr(d, "commission", 0) or 0)
-                   + float(getattr(d, "swap", 0) or 0))
+            # MT5 "Profit" kolonu ile birebir
+            pnl = float(getattr(d, "profit", 0) or 0)
             target = None
             if mg in bot_all:
                 for gname, gset in groups.items():

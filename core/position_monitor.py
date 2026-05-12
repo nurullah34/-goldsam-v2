@@ -146,11 +146,12 @@ class PositionMonitor:
         if deals is None:
             return None
 
+        # MT5'in "Profit" kolonu ile birebir olsun: komisyon + swap hariç
         total = 0.0
         found = False
         for d in deals:
             if d.position_id == ticket and d.entry in (mt5.DEAL_ENTRY_OUT, mt5.DEAL_ENTRY_INOUT):
-                total += float(d.profit or 0) + float(d.commission or 0) + float(d.swap or 0)
+                total += float(d.profit or 0)
                 found = True
         return round(total, 2) if found else None
 
