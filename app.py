@@ -493,8 +493,7 @@ class MainWindow(QMainWindow):
                     self.engine.register(strat)
                     active_count += 1
                 self._log_msg(
-                    f"MULTI100 aktif | 4 TF (M30/H2/H3/H4) × 8 strateji = 32 kombinasyon "
-                    f"| {symbol} | lot={smulti['lot']} SL=${smulti['sl_usd']}"
+                    f"MULTI100 aktif | {symbol} | lot={smulti['lot']} SL=${smulti['sl_usd']}"
                 )
 
         smicro = self.card_micro.settings()
@@ -514,8 +513,7 @@ class MainWindow(QMainWindow):
                 self.engine.register(strat)
                 active_count += 1
                 self._log_msg(
-                    f"Micro-Sweep aktif | 27 modül (11 PERFECT + 7 ELITE + 9 STRONG) | "
-                    f"BUY-only | {symbol} | lot={smicro['lot']} SL=${smicro['sl_usd']}"
+                    f"Micro-Sweep aktif | {symbol} | lot={smicro['lot']} SL=${smicro['sl_usd']}"
                 )
 
         if active_count == 0:
