@@ -1,5 +1,5 @@
 import socket
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -311,6 +311,8 @@ class MainWindow(QMainWindow):
         self._stats_8t: Optional[QLabel] = None
         self._stats_multi: Optional[QLabel] = None
         self._stats_micro: Optional[QLabel] = None
+        self._stats_header: Optional[QLabel] = None
+        self._stats_period_group: Optional[QButtonGroup] = None
         self._varlik_label: Optional[QLabel] = None
         self._stats_timer: Optional[QTimer] = None
 
@@ -848,7 +850,7 @@ class MainWindow(QMainWindow):
         return h
 
     def _build_stats_panel(self) -> QFrame:
-        """3 strateji grubu için P/L analizi (8T toplam, MULTI100 toplam, MICRO-S toplam)."""
+        """3 strateji grubu için P/L analizi (8T / MULTI100 / MICRO-S) + periyod seçici."""
         box = QFrame()
         box.setObjectName("StatsPanel")
         box.setStyleSheet(
@@ -862,11 +864,29 @@ class MainWindow(QMainWindow):
         v.setContentsMargins(10, 6, 10, 6)
         v.setSpacing(2)
 
-        header = QLabel("📊 İşlem Analizi (son 30 gün)")
-        header.setStyleSheet(
+        # Üst satır: başlık + periyod seçici
+        top = QHBoxLayout()
+        top.setSpacing(10)
+        self._stats_header = QLabel("📊 İşlem Analizi — Bu Hafta")
+        self._stats_header.setStyleSheet(
             "color: #58a6ff; font-weight: 600; padding: 2px 4px; font-size: 12px;"
         )
-        v.addWidget(header)
+        top.addWidget(self._stats_header)
+        top.addStretch(1)
+
+        self._stats_period_group = QButtonGroup(box)
+        period_options = [(1, "Bugün"), (7, "Bu Hafta"), (30, "Son 30 Gün")]
+        for pid, txt in period_options:
+            rb = QRadioButton(txt)
+            rb.setObjectName("AvgRadio")
+            if pid == 7:  # default
+                rb.setChecked(True)
+            self._stats_period_group.addButton(rb, pid)
+            top.addWidget(rb)
+        self._stats_period_group.idToggled.connect(
+            lambda _id, checked: checked and self._refresh_stats()
+        )
+        v.addLayout(top)
 
         self._stats_8t = QLabel("8T       :  —")
         self._stats_multi = QLabel("MULTI100 :  —")
@@ -875,6 +895,24 @@ class MainWindow(QMainWindow):
             lbl.setObjectName("StatsRow")
             v.addWidget(lbl)
         return box
+
+    def _stats_period_range(self) -> tuple[int, str]:
+        """Seçilen periyod için (start_unix, label) döner."""
+        import time as _time
+        pid = self._stats_period_group.checkedId() if self._stats_period_group else 7
+        now = int(_time.time())
+        if pid == 1:
+            # Bugün: yerel 00:00
+            today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            return int(today.timestamp()), "Bugün"
+        elif pid == 30:
+            return now - 86400 * 30, "Son 30 Gün"
+        else:
+            # Bu Hafta: bu haftanın Pazartesi 00:00
+            now_dt = datetime.now()
+            monday = now_dt - timedelta(days=now_dt.weekday())
+            monday = monday.replace(hour=0, minute=0, second=0, microsecond=0)
+            return int(monday.timestamp()), "Bu Hafta"
 
     # ─── Periyodik stats + varlık yenileme ────────────────────
     def _refresh_stats(self) -> None:
@@ -903,11 +941,14 @@ class MainWindow(QMainWindow):
             )
             self._varlik_label.setTextFormat(Qt.TextFormat.RichText)
 
-        # Son 30 günün kapanmış deal'ları
+        # Seçilen periyot için deal'ları çek
         import time as _time
         now = int(_time.time())
+        period_start, period_label = self._stats_period_range()
+        if self._stats_header is not None:
+            self._stats_header.setText(f"📊 İşlem Analizi — {period_label}")
         try:
-            deals = mt5_mod.history_deals_get(now - 86400 * 30, now + 60)
+            deals = mt5_mod.history_deals_get(period_start, now + 60)
         except Exception:
             deals = None
         if deals is None:
