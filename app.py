@@ -175,7 +175,7 @@ def _field_row(label_text: str, widget) -> QHBoxLayout:
 
 
 class ReportDialog(QDialog):
-    """Saat bazlı detaylı işlem raporu — 24 saat × (İşlem, W, L, Net, WR%)."""
+    """Detaylı işlem listesi — her trade için giriş/çıkış saati + strateji + P/L."""
 
     GROUPS = {
         "8T":       {20270001, 20270002},
@@ -186,11 +186,26 @@ class ReportDialog(QDialog):
         GROUPS["8T"] | GROUPS["MULTI100"] | GROUPS["MICRO-S"]
     )
 
+    @staticmethod
+    def _strategy_name(magic: int) -> str:
+        if magic == 20270001: return "8T LONG"
+        if magic == 20270002: return "8T SHORT"
+        if magic == 20270011: return "MULTI100 M30"
+        if magic == 20270012: return "MULTI100 H2"
+        if magic == 20270013: return "MULTI100 H3"
+        if magic == 20270014: return "MULTI100 H4"
+        if 20270101 <= magic <= 20270127:
+            off = magic - 20270100
+            if 1 <= off <= 11:  return f"MS-P{off:02d}"
+            if 12 <= off <= 18: return f"MS-E{off-11:02d}"
+            if 19 <= off <= 27: return f"MS-S{off-18:02d}"
+        return f"#{magic}"
+
     def __init__(self, parent=None, default_period: int = 7,
                  default_group: str = "Hepsi") -> None:
         super().__init__(parent)
-        self.setWindowTitle("Detaylı İşlem Raporu — Saat Dağılımı")
-        self.resize(820, 720)
+        self.setWindowTitle("Detaylı İşlem Raporu — İşlem Listesi")
+        self.resize(960, 720)
         self.setStyleSheet(STYLE + """
             QDialog { background-color: #0d1117; }
             QTableWidget {
@@ -299,16 +314,24 @@ class ReportDialog(QDialog):
         )
         root.addWidget(self.summary_lbl)
 
-        # 24 saat × 5 kolon tablo
-        self.table = QTableWidget(25, 5, self)  # 24 saat + TOPLAM
-        self.table.setHorizontalHeaderLabels(["İşlem", "W (Kazanç)", "L (Kayıp)", "Net $", "WR %"])
-        self.table.setVerticalHeaderLabels(
-            [f"{h:02d}:00" for h in range(24)] + ["TOPLAM"]
+        # Her satır = bir trade — entry / exit / süre / strateji / yön / lot / P/L
+        self.table = QTableWidget(0, 7, self)
+        self.table.setHorizontalHeaderLabels(
+            ["Giriş", "Çıkış", "Süre", "Strateji", "Yön", "Lot", "P/L ($)"]
         )
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.table.verticalHeader().setDefaultSectionSize(24)
+        hh = self.table.horizontalHeader()
+        hh.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        hh.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        hh.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        hh.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        hh.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        hh.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
+        hh.setSectionResizeMode(6, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.verticalHeader().setDefaultSectionSize(22)
+        self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setAlternatingRowColors(True)
+        self.table.setSortingEnabled(True)
         root.addWidget(self.table, stretch=1)
 
         # Buttonlar — yenile + kapat
@@ -353,6 +376,13 @@ class ReportDialog(QDialog):
             return
 
         import time as _time
+        from collections import defaultdict
+        from PySide6.QtGui import QColor
+
+        GREEN = QColor("#3fb950")
+        RED   = QColor("#f85149")
+        DIM   = QColor("#8b949e")
+
         gname = self.cb_group.currentText()
         magics = self.GROUPS.get(gname, set())
         start, label = self._period_range()
@@ -365,95 +395,121 @@ class ReportDialog(QDialog):
         if deals is None:
             deals = []
 
-        # Saat bazlı agreasyon
-        hours: dict[int, dict] = {h: {"n": 0, "w": 0, "l": 0, "net": 0.0} for h in range(24)}
-        total = {"n": 0, "w": 0, "l": 0, "net": 0.0}
+        # position_id bazlı grupla — entry + exit deal'ları birleştir
+        per_pos: dict[int, dict] = defaultdict(
+            lambda: {"entry": None, "exit": None, "pnl_sum": 0.0,
+                     "magic": 0, "side": "?", "volume": 0.0}
+        )
 
         for d in deals:
-            try:
-                if d.entry not in (mt5_mod.DEAL_ENTRY_OUT, mt5_mod.DEAL_ENTRY_INOUT):
-                    continue
-            except Exception:
-                continue
             mg = int(getattr(d, "magic", 0) or 0)
             if mg not in magics:
                 continue
-            # Deal time = broker server time, saatini al
             try:
-                t = datetime.fromtimestamp(int(d.time))
-                h = t.hour
+                pid = int(d.position_id)
             except Exception:
                 continue
-            pnl = (float(getattr(d, "profit", 0) or 0)
-                   + float(getattr(d, "commission", 0) or 0)
-                   + float(getattr(d, "swap", 0) or 0))
-            hours[h]["n"] += 1
-            hours[h]["net"] += pnl
-            total["n"] += 1
-            total["net"] += pnl
-            if pnl > 0.001:
-                hours[h]["w"] += 1
-                total["w"] += 1
-            elif pnl < -0.001:
-                hours[h]["l"] += 1
-                total["l"] += 1
+            entry_type = getattr(d, "entry", None)
+            try:
+                t = datetime.fromtimestamp(int(d.time))
+            except Exception:
+                continue
 
-        # Özet başlık
-        wr = (100.0 * total["w"] / total["n"]) if total["n"] > 0 else 0.0
-        sign = "+" if total["net"] >= 0 else ""
+            rec = per_pos[pid]
+            rec["magic"] = mg
+            if rec["volume"] == 0.0:
+                rec["volume"] = float(getattr(d, "volume", 0) or 0)
+
+            if entry_type == mt5_mod.DEAL_ENTRY_IN:
+                rec["entry"] = t
+                dtype = int(getattr(d, "type", -1))
+                rec["side"] = (
+                    "BUY"  if dtype == mt5_mod.DEAL_TYPE_BUY  else
+                    "SELL" if dtype == mt5_mod.DEAL_TYPE_SELL else "?"
+                )
+            elif entry_type in (mt5_mod.DEAL_ENTRY_OUT, mt5_mod.DEAL_ENTRY_INOUT):
+                if rec["exit"] is None or t > rec["exit"]:
+                    rec["exit"] = t
+
+            rec["pnl_sum"] += (
+                float(getattr(d, "profit", 0) or 0)
+                + float(getattr(d, "commission", 0) or 0)
+                + float(getattr(d, "swap", 0) or 0)
+            )
+
+        trades = []
+        for pid, rec in per_pos.items():
+            if rec["entry"] is None or rec["exit"] is None:
+                continue
+            trades.append({
+                "pid": pid,
+                "entry": rec["entry"],
+                "exit": rec["exit"],
+                "duration_s": int((rec["exit"] - rec["entry"]).total_seconds()),
+                "strategy": self._strategy_name(rec["magic"]),
+                "side": rec["side"],
+                "volume": rec["volume"],
+                "pnl": rec["pnl_sum"],
+            })
+        trades.sort(key=lambda t: t["entry"], reverse=True)  # en yeni üstte
+
+        # Özet
+        n_total = len(trades)
+        w_total = sum(1 for t in trades if t["pnl"] > 0.001)
+        l_total = sum(1 for t in trades if t["pnl"] < -0.001)
+        net_total = sum(t["pnl"] for t in trades)
+        wr_total = (100.0 * w_total / n_total) if n_total > 0 else 0.0
+        sign = "+" if net_total >= 0 else ""
         self.summary_lbl.setText(
-            f"📊 {gname} — {label}  |  {total['n']} işlem  |  "
-            f"{total['w']}W  {total['l']}L  |  Net {sign}${total['net']:,.2f}  |  WR %{wr:.2f}"
+            f"📊 {gname} — {label}  |  {n_total} işlem  |  "
+            f"{w_total}W  {l_total}L  |  Net {sign}${net_total:,.2f}  |  WR %{wr_total:.2f}"
         )
 
-        from PySide6.QtGui import QColor
-        GREEN = QColor("#3fb950")
-        RED   = QColor("#f85149")
-        DIM   = QColor("#6e7681")
-
         # Tablo doldur
-        def _fill(row: int, s: dict) -> None:
-            n = s["n"]
-            wrh = (100.0 * s["w"] / n) if n > 0 else 0.0
-            sgn = "+" if s["net"] >= 0 else ""
-            items = [
-                str(n) if n > 0 else "—",
-                str(s["w"]) if n > 0 else "—",
-                str(s["l"]) if n > 0 else "—",
-                f"{sgn}${s['net']:,.2f}" if n > 0 else "—",
-                f"%{wrh:.1f}" if n > 0 else "—",
+        def _dur_text(secs: int) -> str:
+            if secs < 0:
+                return "—"
+            if secs < 60:
+                return f"{secs}sn"
+            mins = secs // 60
+            if mins < 60:
+                return f"{mins}dk"
+            h = mins // 60
+            rem = mins % 60
+            return f"{h}sa {rem:02d}dk"
+
+        self.table.setSortingEnabled(False)
+        self.table.setRowCount(len(trades))
+        for row, t in enumerate(trades):
+            entry_str = t["entry"].strftime("%Y-%m-%d %H:%M:%S")
+            exit_str  = t["exit"].strftime("%Y-%m-%d %H:%M:%S")
+            dur_str   = _dur_text(t["duration_s"])
+            pnl_sign  = "+" if t["pnl"] >= 0 else ""
+            pnl_str   = f"{pnl_sign}${t['pnl']:,.2f}"
+            vol_str   = f"{t['volume']:.2f}"
+
+            cells = [
+                (entry_str, Qt.AlignmentFlag.AlignCenter, None),
+                (exit_str,  Qt.AlignmentFlag.AlignCenter, None),
+                (dur_str,   Qt.AlignmentFlag.AlignCenter, DIM),
+                (t["strategy"],
+                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, None),
+                (t["side"], Qt.AlignmentFlag.AlignCenter,
+                    GREEN if t["side"] == "BUY" else (RED if t["side"] == "SELL" else None)),
+                (vol_str, Qt.AlignmentFlag.AlignCenter, DIM),
+                (pnl_str,
+                    Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                    GREEN if t["pnl"] > 0.001 else (RED if t["pnl"] < -0.001 else None)),
             ]
-            for col, val in enumerate(items):
+            for col, (val, align, color) in enumerate(cells):
                 it = QTableWidgetItem(val)
-                it.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                if n == 0:
-                    it.setForeground(DIM)
-                else:
-                    # Net sütunu
-                    if col == 3:
-                        if s["net"] > 0:
-                            it.setForeground(GREEN)
-                        elif s["net"] < 0:
-                            it.setForeground(RED)
-                    # WR sütunu
-                    if col == 4:
-                        if wrh >= 90:
-                            it.setForeground(GREEN)
-                        elif wrh < 60:
-                            it.setForeground(RED)
+                it.setTextAlignment(align)
+                if color is not None:
+                    it.setForeground(color)
                 self.table.setItem(row, col, it)
-
-        for h in range(24):
-            _fill(h, hours[h])
-        _fill(24, total)
-
-        # TOPLAM satırını bold yap
-        for col in range(5):
-            it = self.table.item(24, col)
-            if it is not None:
-                f = it.font()
-                f.setBold(True)
-                it.setFont(f)
+        self.table.setSortingEnabled(True)
+        # Varsayılan: Giriş'e göre azalan (en yeni üstte)
+        self.table.sortItems(0, Qt.SortOrder.DescendingOrder)
 
 
 class StrategyCard(QFrame):
