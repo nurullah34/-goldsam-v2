@@ -499,7 +499,7 @@ class MainWindow(QMainWindow):
         smicro = self.card_micro.settings()
         if smicro["enabled"]:
             if smicro["lot"] <= 0:
-                self._log_msg("Micro-Sweep: lot 0 — strateji başlatılamadı.")
+                self._log_msg("MICRO-S: lot 0 — strateji başlatılamadı.")
             else:
                 strat = MicroSweepStrategy(symbol=symbol)
                 strat.apply_settings(
@@ -513,7 +513,7 @@ class MainWindow(QMainWindow):
                 self.engine.register(strat)
                 active_count += 1
                 self._log_msg(
-                    f"Micro-Sweep aktif | {symbol} | lot={smicro['lot']} SL=${smicro['sl_usd']}"
+                    f"MICRO-S aktif | {symbol} | lot={smicro['lot']} SL=${smicro['sl_usd']}"
                 )
 
         if active_count == 0:

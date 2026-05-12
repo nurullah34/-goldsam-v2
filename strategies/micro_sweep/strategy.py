@@ -38,7 +38,7 @@ class MicroSweepStrategy(Strategy):
     def __init__(self, symbol: str = "GOLD#") -> None:
         self.symbols = [symbol]
         self.key = "micro_sweep"
-        self.display = "Micro-Sweep"
+        self.display = "MICRO-S"
         # magic SET: engine ve monitor 27'sini birden tanısın
         self.magic: set[int] = {MAGIC_BASE + off for _, off, _ in MODULES}
         self._last_bar_time: Optional[str] = None
