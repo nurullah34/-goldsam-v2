@@ -618,8 +618,9 @@ class MainWindow(QMainWindow):
 
         result = check_and_update(BASE_DIR, VERSION, self._log_msg)
         if result is True:
-            self._log_msg("Yeni sürüm açıldı, eski pencere kapanıyor...")
-            QTimer.singleShot(1500, self.close)
+            self._log_msg("Yeni sürüm açıldı, eski pencere 3 sn içinde kapanacak...")
+            # 3 sn bekle — yeni process'in Qt penceresi açılmaya zaman bulsun
+            QTimer.singleShot(3000, self.close)
 
     # ─── UI BUILD ─────────────────────────────────────────────
     def _build_top_status(self) -> QFrame:

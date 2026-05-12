@@ -123,22 +123,45 @@ def download_and_apply(
 
     log(f"✓ {written} dosya güncellendi.")
 
-    # 3. Yeni Python process'i başlat (detached)
+    # 3. Yeni Python process'i başlat — detach + stdin/out/err DEVNULL
+    #    Sebep: parent kapanınca child'ın stdio handle'ları kopabiliyor;
+    #    DEVNULL ile bağlı handle yok, yeni Qt pencere bağımsız açılır.
+    main_path = base_dir / "main.py"
+    if not main_path.exists():
+        log(f"❌ {main_path} bulunamadı — yeniden başlatılamaz.")
+        return False
+
+    exe = sys.executable
+    log(f"Yeni sürüm fırlatılıyor: {exe} {main_path}")
     try:
         DETACHED_PROCESS = 0x00000008
         CREATE_NEW_PROCESS_GROUP = 0x00000200
-        # sys.executable = pythonw.exe veya python.exe
-        subprocess.Popen(
-            [sys.executable, str(base_dir / "main.py")],
+        CREATE_NO_WINDOW = 0x08000000
+
+        proc = subprocess.Popen(
+            [exe, str(main_path)],
             cwd=str(base_dir),
-            creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
+            creationflags=(
+                DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW
+            ),
             close_fds=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
-        log("Yeni sürüm başlatıldı, bot kapanıyor...")
+        log(f"✓ Yeni process PID={proc.pid} başlatıldı, eski bot kapanıyor...")
         return True
     except Exception as e:
-        log(f"Yeni process başlatma hatası: {e}")
-        return False
+        log(f"❌ Yeni process başlatma hatası: {e}")
+        # Fallback: os.startfile ile dene (Windows shell üzerinden)
+        try:
+            import os
+            os.startfile(str(main_path))
+            log("✓ Fallback (os.startfile) ile yeni sürüm açıldı.")
+            return True
+        except Exception as e2:
+            log(f"❌ Fallback da başarısız: {e2}")
+            return False
 
 
 def check_and_update(
