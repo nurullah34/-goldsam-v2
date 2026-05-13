@@ -672,7 +672,7 @@ class MainWindow(QMainWindow):
         self._kasa_concurrent_group: Optional[QButtonGroup] = None
         self._kasa_weekend_chk: Optional[QCheckBox] = None
         self._kasa_manuel_chk: Optional[QCheckBox] = None
-        self._kasa_trail_group: Optional[QButtonGroup] = None
+        self._kasa_trail_input: Optional[QDoubleSpinBox] = None
         # Stats + varlık paneli
         self._stats_8t: Optional[QLabel] = None
         self._stats_multi: Optional[QLabel] = None
@@ -943,10 +943,10 @@ class MainWindow(QMainWindow):
         self.worker.wait(8000)
 
     def _kasa_trail_value(self) -> float:
-        if self._kasa_trail_group is None:
+        if self._kasa_trail_input is None:
             return 1.0
-        cid = self._kasa_trail_group.checkedId()
-        return float(cid) if cid >= 1 else 1.0
+        v = float(self._kasa_trail_input.value())
+        return v if v >= 1.0 else 1.0
 
     def _kasa_concurrent_limit(self) -> int:
         if self._kasa_concurrent_group is None:
@@ -979,13 +979,13 @@ class MainWindow(QMainWindow):
         # Manual positions trail
         if self._kasa_manuel_chk is not None:
             self._kasa_manuel_chk.setChecked(bool(kasa.get("manual_positions_trail", False)))
-        # Trail activate USD
-        ta = int(kasa.get("trail_activate_usd", 1))
-        if self._kasa_trail_group is not None:
-            for btn in self._kasa_trail_group.buttons():
-                if self._kasa_trail_group.id(btn) == ta:
-                    btn.setChecked(True)
-                    break
+        # Trail activate USD — serbest rakam girişi (1-9999)
+        try:
+            ta = float(kasa.get("trail_activate_usd", 1) or 1)
+        except (TypeError, ValueError):
+            ta = 1.0
+        if self._kasa_trail_input is not None:
+            self._kasa_trail_input.setValue(max(1.0, min(9999.0, ta)))
 
         self._log_msg(f"📂 Ayarlar yüklendi ({user_settings.SETTINGS_FILE.name})")
 
@@ -1006,7 +1006,7 @@ class MainWindow(QMainWindow):
                                            if self._kasa_weekend_chk else False),
                 "manual_positions_trail": (self._kasa_manuel_chk.isChecked()
                                            if self._kasa_manuel_chk else False),
-                "trail_activate_usd":     int(self._kasa_trail_value()),
+                "trail_activate_usd":     float(self._kasa_trail_value()),
             },
         }
         ok, msg = user_settings.save(data)
@@ -1145,16 +1145,14 @@ class MainWindow(QMainWindow):
             "Manuel\nişlemler", self._wrap_widget(self._kasa_manuel_chk)
         ))
 
-        self._kasa_trail_group = QButtonGroup(box)
+        # Serbest sayı girişi (1 - 9999 USD)
+        self._kasa_trail_input = _spin(1.0, 9999.0, 1.0, 1.0, decimals=2)
         trail_hbox = QHBoxLayout()
-        trail_hbox.setSpacing(4)
-        for amount in [1, 2, 3, 4, 5]:
-            rb = QRadioButton(f"${amount}")
-            rb.setObjectName("AvgRadio")
-            if amount == 1:
-                rb.setChecked(True)
-            self._kasa_trail_group.addButton(rb, amount)
-            trail_hbox.addWidget(rb)
+        trail_hbox.setSpacing(8)
+        dollar_lbl = QLabel("$")
+        dollar_lbl.setStyleSheet("color: #c9d1d9; font-weight: 600;")
+        trail_hbox.addWidget(dollar_lbl)
+        trail_hbox.addWidget(self._kasa_trail_input)
         trail_hbox.addSpacing(12)
         hint = QLabel("Kara ulaşınca Kar takibi devreye girer ($0.50 adımlarla ilerler)")
         hint.setObjectName("KasaHint")
