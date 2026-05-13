@@ -418,20 +418,21 @@ class ReportDialog(QDialog):
         if deals is None:
             deals = []
 
-        # position_id bazlı grupla — entry + exit deal'ları birleştir
+        # position_id bazlı grupla — TÜM deal'lar dahil (magic filter SONRA).
+        # SL ile kapanan OUT deal'ların magic'i 0 olabiliyor → IN deal'ın
+        # magic'ini ve/veya comment prefix'ini kullan.
         per_pos: dict[int, dict] = defaultdict(
             lambda: {"entry": None, "exit": None, "pnl_sum": 0.0,
-                     "magic": 0, "side": "?", "volume": 0.0}
+                     "magic": 0, "comment": "", "side": "?", "volume": 0.0}
         )
 
         for d in deals:
-            mg = int(getattr(d, "magic", 0) or 0)
-            if not _accept(mg):
-                continue
             try:
                 pid = int(d.position_id)
             except Exception:
                 continue
+            mg = int(getattr(d, "magic", 0) or 0)
+            cmt = str(getattr(d, "comment", "") or "")
             entry_type = getattr(d, "entry", None)
             try:
                 t = datetime.fromtimestamp(int(d.time))
@@ -439,13 +440,22 @@ class ReportDialog(QDialog):
                 continue
 
             rec = per_pos[pid]
-            rec["magic"] = mg
+            # Magic ve comment: IN deal'dan al; yoksa herhangi non-zero magic
+            if entry_type == mt5_mod.DEAL_ENTRY_IN:
+                rec["magic"] = mg
+                if cmt:
+                    rec["comment"] = cmt
+            elif rec["magic"] == 0 and mg != 0:
+                rec["magic"] = mg
+            if not rec["comment"] and cmt:
+                rec["comment"] = cmt
+
             if rec["volume"] == 0.0:
                 rec["volume"] = float(getattr(d, "volume", 0) or 0)
 
             if entry_type == mt5_mod.DEAL_ENTRY_IN:
-                rec["entry"] = t
                 dtype = int(getattr(d, "type", -1))
+                rec["entry"] = t
                 rec["side"] = (
                     "BUY"  if dtype == mt5_mod.DEAL_TYPE_BUY  else
                     "SELL" if dtype == mt5_mod.DEAL_TYPE_SELL else "?"
@@ -456,6 +466,36 @@ class ReportDialog(QDialog):
 
             # MT5 "Profit" kolonu ile birebir olsun: sadece profit (komisyon + swap hariç)
             rec["pnl_sum"] += float(getattr(d, "profit", 0) or 0)
+
+        # Magic fallback'i (comment'ten çıkar) — sonra _accept ile filtre
+        def _resolve_magic(mg: int, cmt: str) -> int:
+            if mg != 0:
+                return mg
+            if cmt.startswith("8T_LONG"):  return 20270001
+            if cmt.startswith("8T_SHORT"): return 20270002
+            if cmt.startswith("M100_M30"): return 20270011
+            if cmt.startswith("M100_H2"):  return 20270012
+            if cmt.startswith("M100_H3"):  return 20270013
+            if cmt.startswith("M100_H4"):  return 20270014
+            if cmt.startswith(("MS-", "MS_")):
+                head = cmt.split("_", 1)[0]
+                try:
+                    tier = head[3]
+                    num = int(head[4:6])
+                    if tier == "P" and 1 <= num <= 11: return 20270100 + num
+                    if tier == "E" and 1 <= num <= 7:  return 20270100 + 11 + num
+                    if tier == "S" and 1 <= num <= 9:  return 20270100 + 18 + num
+                except Exception:
+                    pass
+                return 20270101  # generic MICRO-S
+            if cmt.startswith("GS_"): return 20270200
+            return 0
+
+        for pid, rec in per_pos.items():
+            rec["magic"] = _resolve_magic(rec["magic"], rec["comment"])
+
+        # Şimdi user filter'ını uygula — magic doğru sınıflandırılmış pozisyonlar
+        per_pos = {pid: rec for pid, rec in per_pos.items() if _accept(rec["magic"])}
 
         # Period başlangıç/bitiş datetime (local TZ-naive)
         period_start_dt = datetime.fromtimestamp(start)
@@ -1427,25 +1467,55 @@ class MainWindow(QMainWindow):
         stats = {k: {"n": 0, "w": 0, "l": 0, "net": 0.0}
                  for k in list(groups.keys()) + ["MANUEL"]}
 
+        # position_id bazlı grupla — SL ile kapanan deal'ların magic'i 0 olabiliyor,
+        # bu yüzden IN deal'dan magic'i al, OUT/INOUT deal'lardan P/L'i topla.
+        from collections import defaultdict
+        per_pos = defaultdict(
+            lambda: {"magic": 0, "comment": "", "pnl": 0.0, "has_close": False}
+        )
         for d in deals:
             try:
-                if d.entry not in (mt5_mod.DEAL_ENTRY_OUT, mt5_mod.DEAL_ENTRY_INOUT):
-                    continue
+                pid = int(d.position_id)
             except Exception:
                 continue
+            rec = per_pos[pid]
             mg = int(getattr(d, "magic", 0) or 0)
-            # MT5 "Profit" kolonu ile birebir
-            pnl = float(getattr(d, "profit", 0) or 0)
-            target = None
+            cmt = str(getattr(d, "comment", "") or "")
+            entry_type = getattr(d, "entry", None)
+
+            # Magic'i bul: önce IN deal'dan, yoksa herhangi non-zero
+            if entry_type == mt5_mod.DEAL_ENTRY_IN:
+                rec["magic"] = mg
+                if cmt:
+                    rec["comment"] = cmt
+            elif rec["magic"] == 0 and mg != 0:
+                rec["magic"] = mg
+
+            # P/L sadece kapanış deal'larından
+            if entry_type in (mt5_mod.DEAL_ENTRY_OUT, mt5_mod.DEAL_ENTRY_INOUT):
+                rec["pnl"] += float(getattr(d, "profit", 0) or 0)
+                rec["has_close"] = True
+
+        def _classify(mg: int, cmt: str) -> Optional[str]:
             if mg in bot_all:
                 for gname, gset in groups.items():
                     if mg in gset:
-                        target = gname
-                        break
-            else:
-                target = "MANUEL"
+                        return gname
+            # Fallback: magic kaybolduysa comment prefix'inden
+            if cmt.startswith("8T_"):    return "8T"
+            if cmt.startswith("M100_"):  return "MULTI100"
+            if cmt.startswith("MS-"):    return "MICRO-S"
+            if cmt.startswith("MS_"):    return "MICRO-S"  # underscore varyant
+            if cmt.startswith("GS_"):    return "GOLDS"
+            return "MANUEL"
+
+        for pid, rec in per_pos.items():
+            if not rec["has_close"]:
+                continue
+            target = _classify(rec["magic"], rec["comment"])
             if target is None:
                 continue
+            pnl = rec["pnl"]
             stats[target]["n"] += 1
             stats[target]["net"] += pnl
             if pnl > 0.001:
