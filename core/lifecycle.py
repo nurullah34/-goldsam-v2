@@ -84,23 +84,24 @@ def compute_new_sl(
     min_dist = max(stops_level_points * tick_size, tick_size * 2)
 
     if side == "buy":
-        # LONG: SL bid'in altında olmalı. SL = entry + locked.
+        # LONG: SL bid'in altında olmalı. SL = entry + locked_profit.
         new_sl = round(entry + locked_price_dist, digits)
-        max_allowed = round(bid - min_dist, digits)
-        if new_sl > max_allowed:
-            new_sl = max_allowed
+        # KRİTİK: broker stops_level uzaklığını cap olarak KULLANMA — bu, locked
+        # profit'i kırpıyor (lock $1 yerine $0.40 olabiliyor). Yeterli mesafe
+        # yoksa bu tick'te HİÇ update etme; bid daha çok hareket edince
+        # tekrar denenecek.
+        if new_sl > round(bid - min_dist, digits):
+            return None
         # SL en az entry seviyesinde olmalı (BE veya kâr tarafı)
         if new_sl < entry:
             return None
         if new_sl > current_sl + 1e-9:
             return new_sl
     else:
-        # SHORT: SL ask'ın üstünde olmalı. SL = entry - locked.
+        # SHORT: SL ask'ın üstünde olmalı. SL = entry - locked_profit.
         new_sl = round(entry - locked_price_dist, digits)
-        min_allowed = round(ask + min_dist, digits)
-        if new_sl < min_allowed:
-            new_sl = min_allowed
-        # SL en az entry seviyesinde olmalı (BE veya kâr tarafı)
+        if new_sl < round(ask + min_dist, digits):
+            return None  # broker stops_level müsait değil, sonra dene
         if new_sl > entry:
             return None
         if current_sl <= 0 or new_sl < current_sl - 1e-9:
