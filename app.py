@@ -322,10 +322,10 @@ class ReportDialog(QDialog):
         )
         root.addWidget(self.summary_lbl)
 
-        # Her satır = bir trade — entry / exit / süre / strateji / yön / lot / P/L
-        self.table = QTableWidget(0, 7, self)
+        # Her satır = bir trade — entry / exit / süre / strateji / magic / yön / lot / P/L
+        self.table = QTableWidget(0, 8, self)
         self.table.setHorizontalHeaderLabels(
-            ["Giriş", "Çıkış", "Süre", "Strateji", "Yön", "Lot", "P/L ($)"]
+            ["Giriş", "Çıkış", "Süre", "Strateji", "Magic", "Yön", "Lot", "P/L ($)"]
         )
         hh = self.table.horizontalHeader()
         hh.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
@@ -335,6 +335,7 @@ class ReportDialog(QDialog):
         hh.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         hh.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
         hh.setSectionResizeMode(6, QHeaderView.ResizeMode.ResizeToContents)
+        hh.setSectionResizeMode(7, QHeaderView.ResizeMode.ResizeToContents)
         self.table.verticalHeader().setDefaultSectionSize(22)
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -473,6 +474,7 @@ class ReportDialog(QDialog):
                 "exit": rec["exit"],
                 "duration_s": int((rec["exit"] - rec["entry"]).total_seconds()),
                 "strategy": self._strategy_name(rec["magic"]),
+                "magic": int(rec["magic"]),
                 "side": rec["side"],
                 "volume": rec["volume"],
                 "pnl": rec["pnl_sum"],
@@ -502,6 +504,7 @@ class ReportDialog(QDialog):
                     "exit": now_dt,  # şu an, henüz kapanmadı
                     "duration_s": int((now_dt - p_time).total_seconds()),
                     "strategy": self._strategy_name(mg),
+                    "magic": mg,
                     "side": side,
                     "volume": float(getattr(p, "volume", 0) or 0),
                     "pnl": pnl_open,
@@ -559,6 +562,7 @@ class ReportDialog(QDialog):
             pnl_str   = f"{pnl_label} ●" if is_open else pnl_label
             vol_str   = f"{t['volume']:.2f}"
 
+            magic_str = str(t.get("magic", 0))
             cells = [
                 (entry_str, Qt.AlignmentFlag.AlignCenter, None),
                 (exit_str,  Qt.AlignmentFlag.AlignCenter,
@@ -566,6 +570,7 @@ class ReportDialog(QDialog):
                 (dur_str,   Qt.AlignmentFlag.AlignCenter, DIM),
                 (t["strategy"],
                     Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, None),
+                (magic_str, Qt.AlignmentFlag.AlignCenter, DIM),
                 (t["side"], Qt.AlignmentFlag.AlignCenter,
                     GREEN if t["side"] == "BUY" else (RED if t["side"] == "SELL" else None)),
                 (vol_str, Qt.AlignmentFlag.AlignCenter, DIM),
