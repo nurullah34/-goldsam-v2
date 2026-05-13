@@ -476,19 +476,59 @@ class ReportDialog(QDialog):
                 "side": rec["side"],
                 "volume": rec["volume"],
                 "pnl": rec["pnl_sum"],
+                "open": False,
             })
+
+        # AÇIK POZİSYONLAR — mt5.positions_get
+        try:
+            open_positions = mt5_mod.positions_get()
+        except Exception:
+            open_positions = None
+        if open_positions:
+            now_dt = datetime.fromtimestamp(now)
+            for p in open_positions:
+                mg = int(getattr(p, "magic", 0) or 0)
+                if not _accept(mg):
+                    continue
+                try:
+                    p_time = datetime.fromtimestamp(int(p.time))
+                except Exception:
+                    p_time = now_dt
+                side = "BUY" if int(p.type) == mt5_mod.ORDER_TYPE_BUY else "SELL"
+                pnl_open = float(getattr(p, "profit", 0) or 0)
+                trades.append({
+                    "pid": int(p.ticket),
+                    "entry": p_time,
+                    "exit": now_dt,  # şu an, henüz kapanmadı
+                    "duration_s": int((now_dt - p_time).total_seconds()),
+                    "strategy": self._strategy_name(mg),
+                    "side": side,
+                    "volume": float(getattr(p, "volume", 0) or 0),
+                    "pnl": pnl_open,
+                    "open": True,
+                })
+
         trades.sort(key=lambda t: t["entry"], reverse=True)  # en yeni üstte
 
-        # Özet
-        n_total = len(trades)
-        w_total = sum(1 for t in trades if t["pnl"] > 0.001)
-        l_total = sum(1 for t in trades if t["pnl"] < -0.001)
-        net_total = sum(t["pnl"] for t in trades)
-        wr_total = (100.0 * w_total / n_total) if n_total > 0 else 0.0
+        # Özet — kapalı vs açık ayrımı
+        closed_trades = [t for t in trades if not t.get("open")]
+        open_trades = [t for t in trades if t.get("open")]
+        n_closed = len(closed_trades)
+        w_total = sum(1 for t in closed_trades if t["pnl"] > 0.001)
+        l_total = sum(1 for t in closed_trades if t["pnl"] < -0.001)
+        net_total = sum(t["pnl"] for t in closed_trades)
+        wr_total = (100.0 * w_total / n_closed) if n_closed > 0 else 0.0
         sign = "+" if net_total >= 0 else ""
+        open_pnl = sum(t["pnl"] for t in open_trades)
+        open_sign = "+" if open_pnl >= 0 else ""
+        open_part = (
+            f"   |   🟢 Açık: {len(open_trades)} pozisyon  ({open_sign}${open_pnl:,.2f})"
+            if open_trades else ""
+        )
         self.summary_lbl.setText(
-            f"📊 {gname} — {label}  |  {n_total} işlem  |  "
-            f"{w_total}W  {l_total}L  |  Net {sign}${net_total:,.2f}  |  WR %{wr_total:.2f}"
+            f"📊 {gname} — {label}  |  {n_closed} kapalı işlem  |  "
+            f"{w_total}W  {l_total}L  |  Net {sign}${net_total:,.2f}  |  "
+            f"WR %{wr_total:.2f}{open_part}"
         )
 
         # Tablo doldur
@@ -506,17 +546,23 @@ class ReportDialog(QDialog):
 
         self.table.setSortingEnabled(False)
         self.table.setRowCount(len(trades))
+        from PySide6.QtGui import QBrush
+        OPEN_BG = QBrush(QColor("#1f2d3d"))  # açık pozisyon için hafif farklı zemin
+
         for row, t in enumerate(trades):
+            is_open = bool(t.get("open"))
             entry_str = t["entry"].strftime("%Y-%m-%d %H:%M:%S")
-            exit_str  = t["exit"].strftime("%Y-%m-%d %H:%M:%S")
-            dur_str   = _dur_text(t["duration_s"])
+            exit_str  = "🟢 AÇIK" if is_open else t["exit"].strftime("%Y-%m-%d %H:%M:%S")
+            dur_str   = _dur_text(t["duration_s"]) + (" (sürüyor)" if is_open else "")
             pnl_sign  = "+" if t["pnl"] >= 0 else ""
-            pnl_str   = f"{pnl_sign}${t['pnl']:,.2f}"
+            pnl_label = f"{pnl_sign}${t['pnl']:,.2f}"
+            pnl_str   = f"{pnl_label} ●" if is_open else pnl_label
             vol_str   = f"{t['volume']:.2f}"
 
             cells = [
                 (entry_str, Qt.AlignmentFlag.AlignCenter, None),
-                (exit_str,  Qt.AlignmentFlag.AlignCenter, None),
+                (exit_str,  Qt.AlignmentFlag.AlignCenter,
+                    GREEN if is_open else None),
                 (dur_str,   Qt.AlignmentFlag.AlignCenter, DIM),
                 (t["strategy"],
                     Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, None),
@@ -532,6 +578,8 @@ class ReportDialog(QDialog):
                 it.setTextAlignment(align)
                 if color is not None:
                     it.setForeground(color)
+                if is_open:
+                    it.setBackground(OPEN_BG)
                 self.table.setItem(row, col, it)
         self.table.setSortingEnabled(True)
         # Varsayılan: Giriş'e göre azalan (en yeni üstte)
