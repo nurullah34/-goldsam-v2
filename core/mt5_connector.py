@@ -65,9 +65,10 @@ class MT5Connector:
     def connect(self) -> bool:
         """MT5'i başlat ve hesap bilgisini oku.
 
-        Çoklu MT5 desteği: birden fazla terminal64.exe açıksa, kilitli hesabı
-        (account.lock) içeren MT5'i otomatik bulur. Eğer lock yoksa, ilk
-        bağlanan MT5'i kullanır (ilk bind için).
+        Çoklu MT5 desteği:
+        - Lock varsa: kilitli hesabı içeren MT5'i bul, ona bağlan.
+        - Lock yoksa (ilk bind): tüm açık MT5'leri tara, GERÇEK hesabı
+          DEMO'ya tercih et (trade_mode kontrolü).
         """
         if mt5 is None:
             self._last_error = "MetaTrader5 paketi yüklü değil."
@@ -89,7 +90,9 @@ class MT5Connector:
             if p not in paths_to_try:
                 paths_to_try.append(p)
 
-        seen_logins: list[int] = []
+        # Tüm path'leri dene, account bilgilerini topla
+        # (path, account_info_dict, trade_mode)
+        candidates: list[tuple[Optional[str], dict, int]] = []
 
         for path in paths_to_try:
             try:
@@ -110,38 +113,94 @@ class MT5Connector:
                     pass
                 continue
 
-            seen_logins.append(int(ai.login))
+            info = {
+                "login":    ai.login,
+                "server":   ai.server,
+                "name":     ai.name,
+                "balance":  float(ai.balance),
+                "equity":   float(ai.equity),
+                "currency": ai.currency,
+                "company":  ai.company,
+            }
+            # trade_mode: 0=REAL, 1=CONTEST, 2=DEMO
+            tmode = int(getattr(ai, "trade_mode", 2))
+            candidates.append((path, info, tmode))
 
-            # Lock varsa, hedef hesaba eşleşmeli; yoksa ilk geçerli MT5 yeter
-            if target_login is None or int(ai.login) == target_login:
-                self._account_info = {
-                    "login":    ai.login,
-                    "server":   ai.server,
-                    "name":     ai.name,
-                    "balance":  float(ai.balance),
-                    "equity":   float(ai.equity),
-                    "currency": ai.currency,
-                    "company":  ai.company,
-                }
+            # Lock varsa hemen eşleşeni döndür
+            if target_login is not None and int(ai.login) == target_login:
+                self._account_info = info
                 self._connected = True
                 self._active_path = path
                 self._last_error = ""
                 return True
 
-        # Hiçbir MT5'te hedef hesap yok
+        # Buraya gelirsek ya lock yok ya da kilitli hesap bulunamadı
+
+        # Lock varsa hata mesajı
         if target_login is not None:
-            found_str = ", ".join(f"#{x}" for x in seen_logins) if seen_logins else "YOK"
+            seen = ", ".join(f"#{c[1]['login']}" for c in candidates) or "YOK"
             self._last_error = (
                 f"Bot #{target_login} hesabına kilitli. "
-                f"Açık MT5'lerde bulunan hesaplar: {found_str}. "
+                f"Açık MT5'lerde bulunan hesaplar: {seen}. "
                 f"Doğru hesabı MT5'te aç ve tekrar dene."
             )
-        else:
+            return False
+
+        # Lock yok — ilk bind. Önce REAL (trade_mode=0), sonra CONTEST, sonra DEMO
+        if not candidates:
             self._last_error = (
                 "Hiçbir MT5 açık değil veya hesaba giriş yapılmamış. "
                 "MT5'i aç, hesaba bağlan, tekrar dene."
             )
-        return False
+            return False
+
+        # Sırala: trade_mode (0=real önce, 2=demo en son), sonra path None önce
+        candidates.sort(key=lambda c: (c[2], 0 if c[0] is None else 1))
+
+        # Eğer birden fazla farklı login varsa ve karışıksa kullanıcıyı uyar
+        unique_logins = {c[1]["login"] for c in candidates}
+        if len(unique_logins) > 1:
+            chosen_login = candidates[0][1]["login"]
+            other_logins = [c[1]["login"] for c in candidates if c[1]["login"] != chosen_login]
+            other_str = ", ".join(f"#{x}" for x in other_logins)
+            self._last_error = (
+                f"Birden fazla MT5 hesabı bulundu. "
+                f"GERÇEK hesap tercih edildi: #{chosen_login}. "
+                f"Diğerleri (DEMO): {other_str}."
+            )
+
+        # En iyi adayı seç
+        path, info, _tmode = candidates[0]
+        # Bu path'e tekrar bağlan (önceki shutdown'lar sonrası)
+        try:
+            mt5.shutdown()
+        except Exception:
+            pass
+        try:
+            ok = mt5.initialize(path=path) if path else mt5.initialize()
+        except Exception:
+            ok = False
+        if not ok:
+            self._last_error = f"Tercih edilen MT5'e bağlanılamadı: {path or 'default'}"
+            return False
+        ai = mt5.account_info()
+        if ai is None:
+            self._last_error = "MT5'e bağlanıldı ama hesap bilgisi okunamadı."
+            return False
+        self._account_info = {
+            "login":    ai.login,
+            "server":   ai.server,
+            "name":     ai.name,
+            "balance":  float(ai.balance),
+            "equity":   float(ai.equity),
+            "currency": ai.currency,
+            "company":  ai.company,
+        }
+        self._connected = True
+        self._active_path = path
+        # Lock yoksa hata mesajını sıfırla (uyarı yerine bilgi olarak göstereceğiz)
+        # Ama _last_error'da uyarıyı tut, app.py log'lar
+        return True
 
     def disconnect(self) -> None:
         if mt5 is not None and self._connected:
