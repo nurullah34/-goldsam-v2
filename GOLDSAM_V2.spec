@@ -3,21 +3,18 @@
 
 Cikti: dist/GOLDSAM_V2.exe (yaklasik 80-120 MB).
 Build: python -m PyInstaller --clean --noconfirm GOLDSAM_V2.spec
-
-Optimizasyon notu: PySide6 cok modullu (QtQuick, QtCharts, QtWebEngine,
-QtMultimedia, QtPdf, Qt3D, vb.). Bot sadece QtCore + QtGui + QtWidgets
-kullaniyor. Geri kalanini exclude ederek 249MB -> ~90MB indiriyoruz.
 """
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.hooks import collect_all, collect_dynamic_libs
 
 ROOT = Path(SPECPATH).resolve()
 
-# certifi (HTTPS sertifikalari), cryptography (Fernet), MetaTrader5 — tam paket
 datas = []
 binaries = []
 hiddenimports = []
-for pkg in ("certifi", "cryptography", "MetaTrader5"):
+
+# certifi (HTTPS sertifikalari), cryptography (Fernet)
+for pkg in ("certifi", "cryptography"):
     try:
         ds, bs, hs = collect_all(pkg)
         datas += ds
@@ -26,17 +23,31 @@ for pkg in ("certifi", "cryptography", "MetaTrader5"):
     except Exception:
         pass
 
-# MetaTrader5 — collect_all'in atladigi C extension binary'lerini manuel ekle
-# _core.cp312-win_amd64.pyd MT5 paketinde olmazsa "MetaTrader5 yuklu degil" hatasi.
+# MetaTrader5 — MANUEL paketleme (collect_all _core.pyd'yi atlar)
+# .pyd ve .dll dosyalarini binaries'e ekle, paket klasorunun tum icerigi
+# datas'a (collect_data_files include_py_files=True).
 try:
     import MetaTrader5 as _mt5_mod
     _mt5_dir = Path(_mt5_mod.__file__).resolve().parent
+
+    # Tum .py dosyalari (init dahil)
+    for _py in _mt5_dir.glob("*.py"):
+        datas.append((str(_py), "MetaTrader5"))
+
+    # Tum .pyd C extension'lar (KRITIK!)
     for _pyd in _mt5_dir.glob("*.pyd"):
         binaries.append((str(_pyd), "MetaTrader5"))
+
+    # Yan DLL'ler varsa
     for _dll in _mt5_dir.glob("*.dll"):
         binaries.append((str(_dll), "MetaTrader5"))
-except Exception:
-    pass
+
+    print(f"[SPEC] MetaTrader5 klasoru: {_mt5_dir}")
+    print(f"[SPEC] .py: {len(list(_mt5_dir.glob('*.py')))}, "
+          f".pyd: {len(list(_mt5_dir.glob('*.pyd')))}, "
+          f".dll: {len(list(_mt5_dir.glob('*.dll')))}")
+except Exception as _e:
+    print(f"[SPEC] MT5 paketleme HATA: {_e}")
 
 # PySide6 — sadece kullandigimiz modulleri elle ekle
 hiddenimports += [
@@ -44,7 +55,6 @@ hiddenimports += [
     "PySide6.QtGui",
     "PySide6.QtWidgets",
     "shiboken6",
-    # MT5 C extension'i acikca da ekle (yedek)
     "MetaTrader5",
     "MetaTrader5._core",
 ]
@@ -56,16 +66,13 @@ a = Analysis(
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
-    hookspath=[],
+    hookspath=[str(ROOT / "hooks")],   # custom hook'lar (hook-MetaTrader5.py)
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
-        # VPS server kodu — bot exe'sine GIRMEMELI
         "_server",
         "strategies",
-        # Test/dev paketleri
         "pytest", "pytest_qt", "hypothesis",
-        # Gereksiz GUI framework'leri
         "tkinter",
         # PySide6 — bizim kullanmadigimiz buyuk modulleri ATLA
         "PySide6.QtQuick",
@@ -134,10 +141,11 @@ exe = EXE(
     strip=False,
     upx=True,
     upx_exclude=[
-        # UPX bazi Qt DLL'lerinde calismayabiliyor — exclude (guvenli taraf)
         "Qt6Core.dll", "Qt6Gui.dll", "Qt6Widgets.dll", "Qt6Network.dll",
         "VCRUNTIME140.dll", "VCRUNTIME140_1.dll",
         "python312.dll",
+        # MT5 .pyd UPX ile sikistirma — ImportError yapabilir
+        "_core.cp312-win_amd64.pyd",
     ],
     runtime_tmpdir=None,
     console=False,

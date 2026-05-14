@@ -3,10 +3,12 @@ from __future__ import annotations
 import os
 from typing import Optional
 
+_MT5_IMPORT_ERROR: str = ""
 try:
     import MetaTrader5 as mt5
-except ImportError:
+except Exception as _e:
     mt5 = None
+    _MT5_IMPORT_ERROR = f"{type(_e).__name__}: {_e}"
 
 
 def _scan_mt5_paths() -> list[str]:
@@ -71,7 +73,9 @@ class MT5Connector:
           DEMO'ya tercih et (trade_mode kontrolü).
         """
         if mt5 is None:
-            self._last_error = "MetaTrader5 paketi yüklü değil."
+            self._last_error = (
+                f"MetaTrader5 paketi yuklenmedi. Detay: {_MT5_IMPORT_ERROR or 'sebep yok'}"
+            )
             return False
 
         # Hedef login (kilitli hesap)
