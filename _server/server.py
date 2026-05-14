@@ -259,6 +259,38 @@ def admin_cleanup(days: int = Query(30, ge=1), x_admin_token: str = Header(...))
     return {"ok": True, "deleted_signals": deleted}
 
 
+@app.post("/admin/update")
+def admin_update(x_admin_token: str = Header(...)):
+    """Self-update — GitHub'dan yeni kod çek, restart et. BASLAT.bat loop devralacak."""
+    require_admin(x_admin_token)
+    import self_update
+    result = self_update.perform_update(log_fn=print)
+    if result.get("ok"):
+        # 2sn sonra exit — response gönder, BASLAT.bat restart eder
+        self_update.schedule_exit(delay_sec=2.0)
+    return result
+
+
+@app.get("/admin/version")
+def admin_version():
+    """Mevcut server versiyonu — kod hash'i (her güncellemede değişir)."""
+    import hashlib
+    from pathlib import Path
+    code_dir = Path(__file__).parent
+    hasher = hashlib.sha256()
+    for f in sorted(code_dir.rglob("*.py")):
+        if "__pycache__" in str(f):
+            continue
+        try:
+            hasher.update(f.read_bytes())
+        except Exception:
+            pass
+    return {
+        "code_hash": hasher.hexdigest()[:12],
+        "engine_status": engine.status,
+    }
+
+
 # ───── Entry ─────────────────────────────────────────────────
 
 if __name__ == "__main__":
