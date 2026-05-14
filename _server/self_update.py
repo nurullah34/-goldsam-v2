@@ -108,10 +108,42 @@ def perform_update(log_fn=print) -> dict:
 
 
 def schedule_exit(delay_sec: float = 2.0) -> None:
-    """Belirli süre sonra process'i kapat — uvicorn'un response göndermesi için bekler."""
+    """Belirli süre sonra process'i kapat — yeni server.py'yi DETACHED olarak
+    başlatır, sonra kendini öldürür.
+
+    Bu sayede BASLAT.bat goto LOOP'una bağımlı kalmıyoruz — bat pencere
+    kapansa bile yeni server kendi başına devam eder. (Eski yöntemde
+    self_update sadece os._exit(0) yapıyordu, BASLAT.bat takıldığında
+    server hiç açılmıyordu.)
+    """
     import threading
+
     def _bye():
         import time
+        import subprocess
+        import sys as _sys
+
         time.sleep(delay_sec)
+
+        # Yeni Python process'ini DETACHED olarak başlat — eski process
+        # kapatılınca bile yeni process devam eder. Win32 specific flags:
+        DETACHED_PROCESS = 0x00000008
+        CREATE_NEW_PROCESS_GROUP = 0x00000200
+        try:
+            subprocess.Popen(
+                [_sys.executable, str(SERVER_DIR / "server.py")],
+                cwd=str(SERVER_DIR),
+                creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
+                close_fds=True,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception:
+            # Yeni process açılamadıysa eski BASLAT.bat goto LOOP'una düşelim
+            pass
+
+        # Eski process'i öldür — yeni başlatılan zaten detached, ölmez.
         os._exit(0)
+
     threading.Thread(target=_bye, daemon=True).start()
