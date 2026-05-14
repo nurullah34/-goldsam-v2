@@ -771,7 +771,8 @@ class MainWindow(QMainWindow):
         self._kasa_concurrent_group: Optional[QButtonGroup] = None
         self._kasa_weekend_chk: Optional[QCheckBox] = None
         self._kasa_manuel_chk: Optional[QCheckBox] = None
-        self._kasa_trail_input: Optional[QDoubleSpinBox] = None
+        self._kasa_trail_long_input: Optional[QDoubleSpinBox] = None
+        self._kasa_trail_short_input: Optional[QDoubleSpinBox] = None
         # Stats + varlık paneli
         self._stats_8t: Optional[QLabel] = None
         self._stats_multi: Optional[QLabel] = None
@@ -915,7 +916,8 @@ class MainWindow(QMainWindow):
         # Kartlardan ayarları topla, stratejileri register et
         self.engine.reset()
         active_count = 0
-        trail = self._kasa_trail_value()
+        trail_long = self._kasa_trail_long()
+        trail_short = self._kasa_trail_short()
         symbol = self._current_symbol()
         concurrent = self._kasa_concurrent_limit()
         self.monitor.symbol = symbol
@@ -948,7 +950,7 @@ class MainWindow(QMainWindow):
                 enabled=True,
                 lot=s["lot"],
                 sl_usd=s["sl_usd"],
-                trail_activate_usd=trail,
+                trail_activate_usd=trail_long if direction == "long" else trail_short,
                 avg_threshold_usd=s["avg_threshold_usd"],
                 avg_lot=s["avg_lot"],
             )
@@ -967,7 +969,7 @@ class MainWindow(QMainWindow):
                         enabled=True,
                         lot=smulti["lot"],
                         sl_usd=smulti["sl_usd"],
-                        trail_activate_usd=trail,
+                        trail_activate_usd=trail_long,
                         avg_threshold_usd=smulti["avg_threshold_usd"],
                         avg_lot=smulti["avg_lot"],
                     )
@@ -987,7 +989,7 @@ class MainWindow(QMainWindow):
                     enabled=True,
                     lot=smicro["lot"],
                     sl_usd=smicro["sl_usd"],
-                    trail_activate_usd=trail,
+                    trail_activate_usd=trail_long,
                     avg_threshold_usd=smicro["avg_threshold_usd"],
                     avg_lot=smicro["avg_lot"],
                 )
@@ -1007,7 +1009,7 @@ class MainWindow(QMainWindow):
                     enabled=True,
                     lot=sgs["lot"],
                     sl_usd=sgs["sl_usd"],
-                    trail_activate_usd=trail,
+                    trail_activate_usd=trail_short,
                     avg_threshold_usd=sgs["avg_threshold_usd"],
                     avg_lot=sgs["avg_lot"],
                 )
@@ -1027,7 +1029,7 @@ class MainWindow(QMainWindow):
                     enabled=True,
                     lot=sgn["lot"],
                     sl_usd=sgn["sl_usd"],
-                    trail_activate_usd=trail,
+                    trail_activate_usd=trail_long,
                     avg_threshold_usd=sgn["avg_threshold_usd"],
                     avg_lot=sgn["avg_lot"],
                 )
@@ -1042,7 +1044,7 @@ class MainWindow(QMainWindow):
             return
 
         # Monitor ayarları (Kasa panelinden)
-        self.monitor.set_trail_activate(trail)
+        self.monitor.set_trail_activate(trail_long, trail_short)
         self.monitor.set_manage_manual(
             bool(self._kasa_manuel_chk and self._kasa_manuel_chk.isChecked())
         )
@@ -1062,10 +1064,16 @@ class MainWindow(QMainWindow):
         self.worker.stop()
         self.worker.wait(8000)
 
-    def _kasa_trail_value(self) -> float:
-        if self._kasa_trail_input is None:
+    def _kasa_trail_long(self) -> float:
+        if self._kasa_trail_long_input is None:
             return 1.0
-        v = float(self._kasa_trail_input.value())
+        v = float(self._kasa_trail_long_input.value())
+        return v if v >= 1.0 else 1.0
+
+    def _kasa_trail_short(self) -> float:
+        if self._kasa_trail_short_input is None:
+            return 1.0
+        v = float(self._kasa_trail_short_input.value())
         return v if v >= 1.0 else 1.0
 
     def _kasa_concurrent_limit(self) -> int:
@@ -1100,13 +1108,21 @@ class MainWindow(QMainWindow):
         # Manual positions trail
         if self._kasa_manuel_chk is not None:
             self._kasa_manuel_chk.setChecked(bool(kasa.get("manual_positions_trail", False)))
-        # Trail activate USD — serbest rakam girişi (1-9999)
-        try:
-            ta = float(kasa.get("trail_activate_usd", 1) or 1)
-        except (TypeError, ValueError):
-            ta = 1.0
-        if self._kasa_trail_input is not None:
-            self._kasa_trail_input.setValue(max(1.0, min(9999.0, ta)))
+        # Trail activate USD — LONG ve SHORT ayrı (eski tek değer geriye uyum)
+        def _read_trail(key: str, fallback: float = 1.0) -> float:
+            try:
+                v = float(kasa.get(key, fallback) or fallback)
+                return max(1.0, min(9999.0, v))
+            except (TypeError, ValueError):
+                return fallback
+        # Eski "trail_activate_usd" tek değerse her ikisine de uygula
+        legacy = _read_trail("trail_activate_usd", 1.0)
+        tl = _read_trail("trail_activate_long_usd", legacy)
+        ts = _read_trail("trail_activate_short_usd", legacy)
+        if self._kasa_trail_long_input is not None:
+            self._kasa_trail_long_input.setValue(tl)
+        if self._kasa_trail_short_input is not None:
+            self._kasa_trail_short_input.setValue(ts)
 
         self._log_msg(f"📂 Ayarlar yüklendi ({user_settings.SETTINGS_FILE.name})")
 
@@ -1128,7 +1144,8 @@ class MainWindow(QMainWindow):
                                            if self._kasa_weekend_chk else False),
                 "manual_positions_trail": (self._kasa_manuel_chk.isChecked()
                                            if self._kasa_manuel_chk else False),
-                "trail_activate_usd":     float(self._kasa_trail_value()),
+                "trail_activate_long_usd":  float(self._kasa_trail_long()),
+                "trail_activate_short_usd": float(self._kasa_trail_short()),
             },
         }
         ok, msg = user_settings.save(data)
@@ -1271,20 +1288,35 @@ class MainWindow(QMainWindow):
             "Manuel\nişlemler", self._wrap_widget(self._kasa_manuel_chk)
         ))
 
-        # Serbest sayı girişi (1 - 9999 USD)
-        self._kasa_trail_input = _spin(1.0, 9999.0, 1.0, 1.0, decimals=2)
-        trail_hbox = QHBoxLayout()
-        trail_hbox.setSpacing(8)
-        dollar_lbl = QLabel("$")
-        dollar_lbl.setStyleSheet("color: #c9d1d9; font-weight: 600;")
-        trail_hbox.addWidget(dollar_lbl)
-        trail_hbox.addWidget(self._kasa_trail_input)
-        trail_hbox.addSpacing(12)
-        hint = QLabel("Kara ulaşınca Kar takibi devreye girer ($0.50 adımlarla ilerler)")
-        hint.setObjectName("KasaHint")
-        trail_hbox.addWidget(hint)
-        trail_hbox.addStretch(1)
-        inner_v.addLayout(self._kasa_row("Trailing\nbaşlangıç", trail_hbox))
+        # LONG Trailing — 8T LONG, MULTI100, MICRO-S, GENIS için
+        self._kasa_trail_long_input = _spin(1.0, 9999.0, 1.0, 1.0, decimals=2)
+        long_hbox = QHBoxLayout()
+        long_hbox.setSpacing(8)
+        long_dollar = QLabel("$")
+        long_dollar.setStyleSheet("color: #c9d1d9; font-weight: 600;")
+        long_hbox.addWidget(long_dollar)
+        long_hbox.addWidget(self._kasa_trail_long_input)
+        long_hbox.addSpacing(12)
+        long_hint = QLabel("BUY trade'leri (8T LONG, MULTI100, MICRO-S, GENIS) — $0.50 adımlarla ilerler")
+        long_hint.setObjectName("KasaHint")
+        long_hbox.addWidget(long_hint)
+        long_hbox.addStretch(1)
+        inner_v.addLayout(self._kasa_row("LONG\nTrailing", long_hbox))
+
+        # SHORT Trailing — 8T SHORT, GOLDS için
+        self._kasa_trail_short_input = _spin(1.0, 9999.0, 1.0, 1.0, decimals=2)
+        short_hbox = QHBoxLayout()
+        short_hbox.setSpacing(8)
+        short_dollar = QLabel("$")
+        short_dollar.setStyleSheet("color: #c9d1d9; font-weight: 600;")
+        short_hbox.addWidget(short_dollar)
+        short_hbox.addWidget(self._kasa_trail_short_input)
+        short_hbox.addSpacing(12)
+        short_hint = QLabel("SELL trade'leri (8T SHORT, GOLDS) — $0.50 adımlarla ilerler")
+        short_hint.setObjectName("KasaHint")
+        short_hbox.addWidget(short_hint)
+        short_hbox.addStretch(1)
+        inner_v.addLayout(self._kasa_row("SHORT\nTrailing", short_hbox))
 
         v.addWidget(inner)
         return box

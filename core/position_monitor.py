@@ -31,7 +31,9 @@ class PositionMonitor:
     def __init__(self, log: Callable[[str], None], symbol: str = "GOLD#") -> None:
         self.log = log
         self.symbol = symbol
-        self.trail_activate_usd: float = 1.0
+        # Yön bazlı trailing — pozisyon BUY ise long, SELL ise short kullan
+        self.trail_activate_long_usd: float = 1.0
+        self.trail_activate_short_usd: float = 1.0
         self.manage_manual_positions: bool = False
         self._known_tickets: set[int] = set()
         self._silent_warned: bool = False  # market kapalı uyarısı spam önleyici
@@ -41,8 +43,12 @@ class PositionMonitor:
         self._MAX_PENDING_RETRIES = 6  # ~30 sn (6 × 5 sn tick)
 
     # ─── Ayar setter'ları ─────────────────────────────────────
-    def set_trail_activate(self, usd: float) -> None:
-        self.trail_activate_usd = max(0.5, float(usd))
+    def set_trail_activate(self, long_usd: float, short_usd: float = None) -> None:
+        """LONG ve SHORT için ayrı trail eşikleri. short=None → long ile aynı."""
+        self.trail_activate_long_usd = max(0.5, float(long_usd))
+        self.trail_activate_short_usd = max(
+            0.5, float(short_usd if short_usd is not None else long_usd)
+        )
 
     def set_manage_manual(self, enabled: bool) -> None:
         self.manage_manual_positions = bool(enabled)
@@ -75,6 +81,11 @@ class PositionMonitor:
 
             side = "buy" if p.type == mt5.POSITION_TYPE_BUY else "sell"
             current_sl = float(p.sl or 0)
+            # Yön bazlı trailing eşiği
+            trail_activate = (
+                self.trail_activate_long_usd if side == "buy"
+                else self.trail_activate_short_usd
+            )
 
             new_sl = compute_new_sl(
                 side=side,
@@ -88,7 +99,7 @@ class PositionMonitor:
                 digits=int(si.digits),
                 stops_level_points=int(getattr(si, "trade_stops_level", 0) or 0),
                 profit_usd=float(p.profit),
-                trail_activate_usd=self.trail_activate_usd,
+                trail_activate_usd=trail_activate,
             )
 
             if new_sl is None:

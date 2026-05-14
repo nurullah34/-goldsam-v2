@@ -31,10 +31,11 @@ DEFAULTS: dict[str, Any] = {
         "genis":       deepcopy(_DEFAULT_STRAT),
     },
     "kasa": {
-        "concurrent_limit":      999,    # 3 / 6 / 10 / 999=sınırsız
-        "weekend_protection":    False,
-        "manual_positions_trail": False,
-        "trail_activate_usd":    1,      # 1 / 2 / 3 / 4 / 5
+        "concurrent_limit":          999,    # 3 / 6 / 10 / 999=sınırsız
+        "weekend_protection":        False,
+        "manual_positions_trail":    False,
+        "trail_activate_long_usd":   1.0,    # BUY pozisyonları için
+        "trail_activate_short_usd":  1.0,    # SELL pozisyonları için
     },
 }
 
