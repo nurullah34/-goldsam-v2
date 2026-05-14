@@ -106,17 +106,20 @@ class LicenseDialog(QDialog):
 
     def __init__(self, client: KriptolyClient,
                  mt5_login_default: int = 0,
+                 email_default: str = "",
                  parent=None) -> None:
         super().__init__(parent)
         self._client = client
         self._mt5_login_default = int(mt5_login_default or 0)
+        self._email_default = (email_default or "").strip()
         # Sonuç — accept'te doldurulur
         self.agent_token: Optional[str] = None
         self.customer_name: str = ""
+        self.customer_email: str = ""
         self.expires_at: Optional[str] = None
         self.days_remaining: Optional[int] = None
 
-        self.setWindowTitle("GOLDSAM V2 — Lisans Doğrulama")
+        self.setWindowTitle("GOLDSAM V2 — Giriş")
         self.setModal(True)
         self.setFixedWidth(440)
         self.setStyleSheet(DIALOG_STYLE)
@@ -131,12 +134,12 @@ class LicenseDialog(QDialog):
         root.setSpacing(14)
 
         # Başlık
-        title = QLabel("🔐 Lisans Doğrulama")
+        title = QLabel("🔐 Giriş")
         title.setObjectName("Title")
         title.setAlignment(Qt.AlignCenter)
         root.addWidget(title)
 
-        sub = QLabel("Botu kullanmak için size verilen lisans kodunu girin.")
+        sub = QLabel("E-postanı ve sana verilen lisans kodunu (şifre) gir.")
         sub.setObjectName("Subtitle")
         sub.setAlignment(Qt.AlignCenter)
         sub.setWordWrap(True)
@@ -149,8 +152,18 @@ class LicenseDialog(QDialog):
         form.setContentsMargins(16, 16, 16, 16)
         form.setSpacing(12)
 
-        # Lisans kodu
-        lbl_key = QLabel("LİSANS KODU")
+        # E-posta
+        lbl_mail = QLabel("E-POSTA")
+        lbl_mail.setObjectName("FieldLabel")
+        form.addWidget(lbl_mail)
+        self.input_email = QLineEdit()
+        self.input_email.setPlaceholderText("ornek@mail.com")
+        if self._email_default:
+            self.input_email.setText(self._email_default)
+        form.addWidget(self.input_email)
+
+        # Lisans kodu (= "şifre")
+        lbl_key = QLabel("ŞİFRE (LİSANS KODU)")
         lbl_key.setObjectName("FieldLabel")
         form.addWidget(lbl_key)
         self.input_key = QLineEdit()
@@ -197,7 +210,7 @@ class LicenseDialog(QDialog):
 
         btn_row.addItem(QSpacerItem(20, 0, QSizePolicy.Expanding, QSizePolicy.Minimum))
 
-        self.btn_ok = QPushButton("✓ Doğrula")
+        self.btn_ok = QPushButton("✓ Giriş")
         self.btn_ok.setObjectName("PrimaryBtn")
         self.btn_ok.clicked.connect(self._on_verify)
         self.btn_ok.setDefault(True)
@@ -226,11 +239,18 @@ class LicenseDialog(QDialog):
             self.err_label.hide()
 
     def _on_verify(self) -> None:
+        email = self.input_email.text().strip()
         key = self.input_key.text().strip().upper()
         mt5_login_txt = self.input_mt5.text().strip()
 
+        if not email:
+            self._show_error("E-posta boş olamaz.")
+            return
+        if "@" not in email or "." not in email:
+            self._show_error("Geçerli bir e-posta girin.")
+            return
         if not key:
-            self._show_error("Lisans kodu boş olamaz.")
+            self._show_error("Lisans kodu (şifre) boş olamaz.")
             return
         try:
             mt5_login = int(mt5_login_txt)
@@ -256,17 +276,19 @@ class LicenseDialog(QDialog):
             mt5_login=mt5_login,
             device_id=device_id,
             device_name=device_name,
+            customer_email=email,
         )
 
         if not ok:
             self.btn_ok.setEnabled(True)
-            self.btn_ok.setText("✓ Doğrula")
-            self._show_error(msg or "Lisans reddedildi.")
+            self.btn_ok.setText("✓ Giriş")
+            self._show_error(msg or "Giriş reddedildi.")
             return
 
         # Başarılı — token'ı diske kaydet
         self.agent_token = body.get("agent_token", "")
         self.customer_name = body.get("customer_name", "") or ""
+        self.customer_email = email
         self.expires_at = body.get("expires_at")
         self.days_remaining = body.get("days_remaining")
 
@@ -277,6 +299,7 @@ class LicenseDialog(QDialog):
             customer_name=self.customer_name,
             expires_at=self.expires_at,
             days_remaining=self.days_remaining,
+            customer_email=email,
         )
 
         self.accept()

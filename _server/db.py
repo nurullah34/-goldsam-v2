@@ -267,11 +267,16 @@ def bind_device(license_id: int, device_id: str, device_name: str) -> None:
 
 
 def license_login(license_key: str, mt5_login: int,
-                  device_id: str, device_name: str) -> tuple[bool, str, Optional[dict]]:
+                  device_id: str, device_name: str,
+                  customer_email: str = "") -> tuple[bool, str, Optional[dict]]:
     """Bot login: license_key + MT5 hesabi + cihaz ID -> agent_token.
 
     Ilk login'de cihaz bind edilir. Sonraki login'lerde device_id ayniysa OK,
     farkliysa REDDEDIL (1 cihaz kurali).
+
+    Email opsiyonel — verilirse lisans kaydindaki email ile eslesmek zorunda
+    (case-insensitive). Bu sayede kullanici "ben kimim" diye email yazip
+    sifre yerine lisans kodunu girer; iki adim onay.
     """
     lic = get_license_by_key(license_key)
     if not lic:
@@ -286,6 +291,14 @@ def license_login(license_key: str, mt5_login: int,
             f"Bu lisans #{lic['mt5_login']} MT5 hesabina bagli, "
             f"sen #{mt5_login} ile baglandin"
         ), None
+
+    # Email kontrolu (opsiyonel — sadece her ikisi de doluysa karsilastir)
+    if customer_email and lic.get("customer_email"):
+        if customer_email.strip().lower() != lic["customer_email"].strip().lower():
+            return False, (
+                f"E-posta lisans kayda eslemiyor. "
+                f"Lisansin sahibi farkli bir e-postaya tanimli."
+            ), None
 
     # Sure kontrolu
     if lic.get("expires_at"):

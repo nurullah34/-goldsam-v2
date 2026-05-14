@@ -27,7 +27,8 @@ LICENSE_VERSION = 1
 
 def save(agent_token: str, license_key: str, mt5_login: int,
          customer_name: str = "", expires_at: Optional[str] = None,
-         days_remaining: Optional[int] = None) -> bool:
+         days_remaining: Optional[int] = None,
+         customer_email: str = "") -> bool:
     """Lisansı şifreleyip diske yaz."""
     APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
     payload = {
@@ -35,6 +36,7 @@ def save(agent_token: str, license_key: str, mt5_login: int,
         "license_key":     license_key,
         "mt5_login":       int(mt5_login),
         "customer_name":   customer_name or "",
+        "customer_email":  customer_email or "",
         "expires_at":      expires_at,
         "days_remaining":  days_remaining,
         "saved_at":        datetime.now().isoformat(timespec="seconds"),

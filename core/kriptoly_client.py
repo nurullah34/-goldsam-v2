@@ -96,18 +96,24 @@ class KriptolyClient:
         return bool(self._agent_token and self._mt5_login)
 
     def login(self, license_key: str, mt5_login: int,
-              device_id: str, device_name: str) -> tuple[bool, str, dict]:
+              device_id: str, device_name: str,
+              customer_email: str = "") -> tuple[bool, str, dict]:
         """POST /v1/login → agent_token + meta.
+
+        Email opsiyonel — verilirse server tarafında lisans kaydındaki
+        email ile eşleşmek zorunda. Boş bırakılırsa eski davranış (sadece
+        kod + MT5 hesap).
 
         Dönen: (success, message, body)
         """
         status, body = _post(
             f"{self.server_url}/v1/login",
             {
-                "license_key": license_key.strip().upper(),
-                "mt5_login":   int(mt5_login),
-                "device_id":   device_id,
-                "device_name": device_name or "",
+                "license_key":    license_key.strip().upper(),
+                "mt5_login":      int(mt5_login),
+                "device_id":      device_id,
+                "device_name":    device_name or "",
+                "customer_email": (customer_email or "").strip(),
             },
             timeout=TIMEOUT_LOGIN,
         )

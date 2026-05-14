@@ -60,7 +60,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="GoldSam V2 Strategy Server",
-    version="1.1.0",
+    version="1.1.1",
     lifespan=lifespan,
 )
 
@@ -114,6 +114,7 @@ class LicenseLoginIn(BaseModel):
     mt5_login: int
     device_id: str
     device_name: Optional[str] = ""
+    customer_email: Optional[str] = ""   # opsiyonel — verirse server'da match'lenir
 
 
 class LicenseUpdateIn(BaseModel):
@@ -146,7 +147,7 @@ def require_admin(x_admin_token: Optional[str] = Header(None)) -> None:
 def root():
     return {
         "service": "GoldSam V2 Strategy Server",
-        "version": "1.1.0",
+        "version": "1.1.1",
         "status": "running",
     }
 
@@ -186,6 +187,7 @@ def license_login(payload: LicenseLoginIn):
         mt5_login=payload.mt5_login,
         device_id=payload.device_id,
         device_name=payload.device_name or "",
+        customer_email=(payload.customer_email or "").strip(),
     )
     if not ok or lic is None:
         raise HTTPException(status_code=403, detail=msg)
