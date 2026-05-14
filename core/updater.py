@@ -123,32 +123,45 @@ def _write_swap_bat(exe_path: Path, new_exe_path: Path, bat_path: Path) -> None:
     2. Eski _MEI klasorlerini temizle (cache cakismasi onle)
     3. Sonra swap yap
     """
+    exe_name = exe_path.name
     bat = f"""@echo off
 :: GOLDSAM V2 - update swap (auto-generated)
-:: 5 sn bekle - eski exe atexit handler'i _MEI klasorunu temizlesin
-timeout /t 5 /nobreak >NUL
+:: 1) Eski exe process'ini bekle (TAMAMEN kapansin, atexit cleanup bitsin)
+set /a WAIT=0
+:wait_old
+tasklist /FI "IMAGENAME eq {exe_name}" 2>NUL | find /I "{exe_name}" >NUL
+if not errorlevel 1 (
+    set /a WAIT=%WAIT%+1
+    if %WAIT% GEQ 30 goto force_continue
+    timeout /t 1 /nobreak >NUL
+    goto wait_old
+)
+:force_continue
 
-:: Eski PyInstaller _MEI temp klasorlerini temizle (DLL load cakismasi onle)
+:: 2) Ek 2 sn bekle (atexit handler'i _MEI temizlesin)
+timeout /t 2 /nobreak >NUL
+
+:: 3) Tum %TEMP%\\_MEI* klasorlerini temizle (eski olanlar varsa)
 for /d %%D in ("%TEMP%\\_MEI*") do rmdir /S /Q "%%D" 2>NUL
 
-:: Eski exe'yi silmeyi 3 kez dene (file lock icin)
-set RETRY=0
-:retry
+:: 4) Eski exe dosyasini sil (10 retry)
+set /a RETRY=0
+:retry_del
 del /q "{exe_path}" 2>NUL
 if exist "{exe_path}" (
     set /a RETRY=%RETRY%+1
     if %RETRY% GEQ 10 goto giveup
     timeout /t 1 /nobreak >NUL
-    goto retry
+    goto retry_del
 )
 
-:: Yeni exe'yi yerine koy (ren basarisizsa move)
-ren "{new_exe_path.name}" "{exe_path.name}" 2>NUL
+:: 5) Yeni exe'yi yerine tasi
+ren "{new_exe_path.name}" "{exe_name}" 2>NUL
 if errorlevel 1 (
     move /Y "{new_exe_path}" "{exe_path}" >NUL
 )
 
-:: Yeni exe'yi baslat
+:: 6) Yeni exe'yi baslat
 start "" "{exe_path}"
 goto cleanup
 
