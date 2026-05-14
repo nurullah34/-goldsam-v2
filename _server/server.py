@@ -63,7 +63,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="GoldSam V2 Strategy Server",
-    version="1.1.3",
+    version="1.1.4",
     lifespan=lifespan,
 )
 
@@ -150,7 +150,7 @@ def require_admin(x_admin_token: Optional[str] = Header(None)) -> None:
 def root():
     return {
         "service": "GoldSam V2 Strategy Server",
-        "version": "1.1.3",
+        "version": "1.1.4",
         "status": "running",
     }
 
@@ -169,6 +169,30 @@ def public_status():
     return {
         "engine": engine.status,
         "mt5": account_info() if is_connected() else None,
+    }
+
+
+@app.get("/healthz")
+def healthz():
+    """Stabilite kontrol — uptime + DB + MT5 + engine."""
+    try:
+        mt5_ok = is_connected()
+    except Exception:
+        mt5_ok = False
+    try:
+        from db import list_licenses
+        lic_count = len(list_licenses())
+        db_ok = True
+    except Exception:
+        lic_count = 0
+        db_ok = False
+    return {
+        "ok": db_ok and mt5_ok,
+        "version": "1.1.4",
+        "mt5_connected": mt5_ok,
+        "db_ok": db_ok,
+        "license_count": lic_count,
+        "engine_running": engine.status.get("running", False) if engine else False,
     }
 
 
