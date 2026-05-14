@@ -13,8 +13,10 @@ datas = []
 binaries = []
 hiddenimports = []
 
-# certifi (HTTPS sertifikalari), cryptography (Fernet)
-for pkg in ("certifi", "cryptography"):
+# certifi (HTTPS sertifikalari), cryptography (Fernet), numpy (MT5 dependency)
+# numpy KRITIK: MT5 paketi numpy ile compile edilmis, eksik olursa
+# ImportError: numpy._core.multiarray failed to import
+for pkg in ("certifi", "cryptography", "numpy"):
     try:
         ds, bs, hs = collect_all(pkg)
         datas += ds
@@ -57,6 +59,20 @@ hiddenimports += [
     "shiboken6",
     "MetaTrader5",
     "MetaTrader5._core",
+    # numpy 2.x'in C extension katmanlari
+    "numpy",
+    "numpy._core",
+    "numpy._core.multiarray",
+    "numpy._core.umath",
+    "numpy._core._methods",
+    "numpy._core._multiarray_umath",
+    "numpy._core._exceptions",
+    "numpy._core._dtype",
+    "numpy._core._add_newdocs",
+    "numpy._core._add_newdocs_scalars",
+    "numpy._core._asarray",
+    "numpy._core._type_aliases",
+    "numpy._core.numeric",
 ]
 
 
