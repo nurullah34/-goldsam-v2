@@ -1,0 +1,50 @@
+name: Build & Release exe
+
+# Tag push'unda otomatik build + release. Kullanim:
+#   git tag v2.0.2
+#   git push --tags
+# -> GitHub Actions Windows runner'da exe build eder, release olusturur,
+#    asset olarak GOLDSAM_V2.exe yukler. Bot icindeki "Guncelle" butonu
+#    bu release'i otomatik bulur.
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: write  # release olusturma + asset upload icin
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller PySide6 MetaTrader5 cryptography numpy
+
+      - name: Build exe (PyInstaller)
+        run: python -m PyInstaller --clean --noconfirm GOLDSAM_V2.spec
+
+      - name: Verify exe exists
+        run: |
+          if (-not (Test-Path dist/GOLDSAM_V2.exe)) { exit 1 }
+          Get-Item dist/GOLDSAM_V2.exe | Select-Object Name, Length
+
+      - name: Create Release + Upload exe
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/GOLDSAM_V2.exe
+          name: ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
