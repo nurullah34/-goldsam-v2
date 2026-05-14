@@ -34,6 +34,9 @@ class PositionMonitor:
         # Yön bazlı trailing — pozisyon BUY ise long, SELL ise short kullan
         self.trail_activate_long_usd: float = 1.0
         self.trail_activate_short_usd: float = 1.0
+        # Trailing aktif/pasif (yön bazlı). False ise o yönde SL hareket etmez.
+        self.trail_long_enabled: bool = True
+        self.trail_short_enabled: bool = True
         self.manage_manual_positions: bool = False
         self._known_tickets: set[int] = set()
         self._silent_warned: bool = False  # market kapalı uyarısı spam önleyici
@@ -49,6 +52,11 @@ class PositionMonitor:
         self.trail_activate_short_usd = max(
             0.5, float(short_usd if short_usd is not None else long_usd)
         )
+
+    def set_trail_enabled(self, long_on: bool, short_on: bool) -> None:
+        """Yön bazlı trailing on/off."""
+        self.trail_long_enabled = bool(long_on)
+        self.trail_short_enabled = bool(short_on)
 
     def set_manage_manual(self, enabled: bool) -> None:
         self.manage_manual_positions = bool(enabled)
@@ -81,6 +89,13 @@ class PositionMonitor:
 
             side = "buy" if p.type == mt5.POSITION_TYPE_BUY else "sell"
             current_sl = float(p.sl or 0)
+            # Yön bazlı trailing aktif mi?
+            enabled = (
+                self.trail_long_enabled if side == "buy"
+                else self.trail_short_enabled
+            )
+            if not enabled:
+                continue  # Bu yön için trailing kapalı — SL'i hiç değiştirme
             # Yön bazlı trailing eşiği
             trail_activate = (
                 self.trail_activate_long_usd if side == "buy"

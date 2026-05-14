@@ -33,7 +33,8 @@ DEFAULTS: dict[str, Any] = {
     "kasa": {
         "concurrent_limit":          999,    # 3 / 6 / 10 / 999=sınırsız
         "weekend_protection":        False,
-        "manual_positions_trail":    False,
+        "trail_long_enabled":        True,
+        "trail_short_enabled":       True,
         "trail_activate_long_usd":   1.0,    # BUY pozisyonları için
         "trail_activate_short_usd":  1.0,    # SELL pozisyonları için
     },

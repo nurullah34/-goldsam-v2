@@ -125,6 +125,25 @@ QRadioButton#AvgRadio::indicator:checked {
 }
 QRadioButton#AvgRadio::indicator:hover { border-color: #58a6ff; }
 
+/* Yeşil noktalı checkbox — Kasa paneli ON/OFF göstergesi */
+QCheckBox#DotCheck {
+    color: #c9d1d9;
+    padding: 2px 6px;
+    spacing: 6px;
+}
+QCheckBox#DotCheck::indicator {
+    width: 14px;
+    height: 14px;
+    border: 1px solid #30363d;
+    border-radius: 7px;
+    background-color: #0d1117;
+}
+QCheckBox#DotCheck::indicator:checked {
+    background-color: #238636;
+    border-color: #2ea043;
+}
+QCheckBox#DotCheck::indicator:hover { border-color: #58a6ff; }
+
 QPushButton {
     background-color: #21262d;
     border: 1px solid #30363d;
@@ -770,7 +789,8 @@ class MainWindow(QMainWindow):
         self._detected_symbol: Optional[str] = None
         self._kasa_concurrent_group: Optional[QButtonGroup] = None
         self._kasa_weekend_chk: Optional[QCheckBox] = None
-        self._kasa_manuel_chk: Optional[QCheckBox] = None
+        self._kasa_trail_long_chk: Optional[QCheckBox] = None
+        self._kasa_trail_short_chk: Optional[QCheckBox] = None
         self._kasa_trail_long_input: Optional[QDoubleSpinBox] = None
         self._kasa_trail_short_input: Optional[QDoubleSpinBox] = None
         # Stats + varlık paneli
@@ -1044,10 +1064,14 @@ class MainWindow(QMainWindow):
             return
 
         # Monitor ayarları (Kasa panelinden)
+        long_on = bool(self._kasa_trail_long_chk and self._kasa_trail_long_chk.isChecked())
+        short_on = bool(self._kasa_trail_short_chk and self._kasa_trail_short_chk.isChecked())
         self.monitor.set_trail_activate(trail_long, trail_short)
-        self.monitor.set_manage_manual(
-            bool(self._kasa_manuel_chk and self._kasa_manuel_chk.isChecked())
-        )
+        self.monitor.set_trail_enabled(long_on, short_on)
+        if not long_on:
+            self._log_msg("⚠️ LONG trailing KAPALI — BUY pozisyonlar trailing yapılmayacak.")
+        if not short_on:
+            self._log_msg("⚠️ SHORT trailing KAPALI — SELL pozisyonlar trailing yapılmayacak.")
 
         # Worker'ı başlat
         self.worker = AgentWorker(self.engine, self.monitor)
@@ -1105,9 +1129,11 @@ class MainWindow(QMainWindow):
         # Weekend protection
         if self._kasa_weekend_chk is not None:
             self._kasa_weekend_chk.setChecked(bool(kasa.get("weekend_protection", False)))
-        # Manual positions trail
-        if self._kasa_manuel_chk is not None:
-            self._kasa_manuel_chk.setChecked(bool(kasa.get("manual_positions_trail", False)))
+        # LONG / SHORT trailing enabled (yeşil göstergeler)
+        if self._kasa_trail_long_chk is not None:
+            self._kasa_trail_long_chk.setChecked(bool(kasa.get("trail_long_enabled", True)))
+        if self._kasa_trail_short_chk is not None:
+            self._kasa_trail_short_chk.setChecked(bool(kasa.get("trail_short_enabled", True)))
         # Trail activate USD — LONG ve SHORT ayrı (eski tek değer geriye uyum)
         def _read_trail(key: str, fallback: float = 1.0) -> float:
             try:
@@ -1142,8 +1168,10 @@ class MainWindow(QMainWindow):
                 "concurrent_limit":       self._kasa_concurrent_limit(),
                 "weekend_protection":     (self._kasa_weekend_chk.isChecked()
                                            if self._kasa_weekend_chk else False),
-                "manual_positions_trail": (self._kasa_manuel_chk.isChecked()
-                                           if self._kasa_manuel_chk else False),
+                "trail_long_enabled":  (self._kasa_trail_long_chk.isChecked()
+                                        if self._kasa_trail_long_chk else True),
+                "trail_short_enabled": (self._kasa_trail_short_chk.isChecked()
+                                        if self._kasa_trail_short_chk else True),
                 "trail_activate_long_usd":  float(self._kasa_trail_long()),
                 "trail_activate_short_usd": float(self._kasa_trail_short()),
             },
@@ -1268,30 +1296,30 @@ class MainWindow(QMainWindow):
         concurrent_hb.addStretch(1)
         v.addLayout(self._kasa_row("Aynı anda açık\nişlem sayısı", concurrent_hb))
 
-        # Hafta sonu koruması
+        # Hafta sonu koruması — yeşil noktalı (DotCheck)
         self._kasa_weekend_chk = QCheckBox(
             "Cuma 17:00 - 23:59 arası yeni işlem alma (açık işlemler etkilenmez)"
         )
+        self._kasa_weekend_chk.setObjectName("DotCheck")
         v.addLayout(self._kasa_row(
             "Hafta sonu\nkoruması", self._wrap_widget(self._kasa_weekend_chk)
         ))
 
-        # İç kutu: Manuel + Trailing
+        # İç kutu: Trailing (LONG + SHORT)
         inner = QFrame()
         inner.setObjectName("KasaInnerBox")
         inner_v = QVBoxLayout(inner)
         inner_v.setContentsMargins(10, 8, 10, 8)
         inner_v.setSpacing(6)
 
-        self._kasa_manuel_chk = QCheckBox("Bot dışı açık işlemleri de trailing ile yönet")
-        inner_v.addLayout(self._kasa_row(
-            "Manuel\nişlemler", self._wrap_widget(self._kasa_manuel_chk)
-        ))
-
         # LONG Trailing — 8T LONG, MULTI100, MICRO-S, GENIS için
+        self._kasa_trail_long_chk = QCheckBox("Aktif")
+        self._kasa_trail_long_chk.setObjectName("DotCheck")
+        self._kasa_trail_long_chk.setChecked(True)
         self._kasa_trail_long_input = _spin(1.0, 9999.0, 1.0, 1.0, decimals=2)
         long_hbox = QHBoxLayout()
         long_hbox.setSpacing(8)
+        long_hbox.addWidget(self._kasa_trail_long_chk)
         long_dollar = QLabel("$")
         long_dollar.setStyleSheet("color: #c9d1d9; font-weight: 600;")
         long_hbox.addWidget(long_dollar)
@@ -1304,9 +1332,13 @@ class MainWindow(QMainWindow):
         inner_v.addLayout(self._kasa_row("LONG\nTrailing", long_hbox))
 
         # SHORT Trailing — 8T SHORT, GOLDS için
+        self._kasa_trail_short_chk = QCheckBox("Aktif")
+        self._kasa_trail_short_chk.setObjectName("DotCheck")
+        self._kasa_trail_short_chk.setChecked(True)
         self._kasa_trail_short_input = _spin(1.0, 9999.0, 1.0, 1.0, decimals=2)
         short_hbox = QHBoxLayout()
         short_hbox.setSpacing(8)
+        short_hbox.addWidget(self._kasa_trail_short_chk)
         short_dollar = QLabel("$")
         short_dollar.setStyleSheet("color: #c9d1d9; font-weight: 600;")
         short_hbox.addWidget(short_dollar)
