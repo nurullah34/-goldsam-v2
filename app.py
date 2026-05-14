@@ -966,7 +966,10 @@ class MainWindow(QMainWindow):
                 license_store.clear()
             else:
                 self.client.set_credentials(saved["agent_token"], mt5_login)
-                # Server doğrulaması
+                # Server doğrulaması (BEST-EFFORT — server kapali/timeout
+                # olsa bile lokal token gecerli kabul edilir, bot calismaya
+                # devam eder. Sadece server NET reddederse (403 detail =
+                # 'Lisans pasif' / 'sure dolmus' vb.) dialog acilir.)
                 ok, body = self.client.heartbeat(
                     mt5_server=mt5_server, open_positions=0,
                     balance=balance, equity=equity,
@@ -986,9 +989,34 @@ class MainWindow(QMainWindow):
                         )
                     license_store.update_meta(days_remaining=days)
                     return
-                # Server reddettiyse → kayıtlı tokenı sil, dialog'a düş
+
+                # ok=False — sebebini ayir:
+                # (a) Network/timeout/server kapali → lokal tokeni KORU, bot calissin
+                # (b) Server NET red (403 detail "Lisans" / "pasif" / "dolmus") → dialog
+                detail = (body.get("detail") or body.get("error") or "").lower()
+                is_network = (
+                    "timed out" in detail or "ulasilamadi" in detail
+                    or "sunucu" in detail or "connection" in detail
+                    or not detail
+                )
+                is_real_reject = (
+                    "lisans" in detail or "pasif" in detail
+                    or "dolmus" in detail or "gecersiz" in detail
+                    or "yetkisiz" in detail or "cihaz" in detail
+                )
+                if is_network and not is_real_reject:
+                    # Sunucu sus / timeout — lokal token gecerli kabul
+                    self._license_ok = True
+                    name = saved.get("customer_name") or "—"
+                    days = saved.get("days_remaining")
+                    self._log_msg(
+                        f"⚠ Server gecici cevapsiz — kayitli lisans ile devam ediliyor "
+                        f"({name}, kalan {days if days is not None else '∞'} gun)"
+                    )
+                    return
+                # Gercek red — token sil + dialog
                 self._log_msg(
-                    "🚫 Lisans server tarafından reddedildi — yeniden giriş gerekiyor."
+                    f"🚫 Lisans server tarafından reddedildi: {detail or 'sebepsiz'}"
                 )
                 license_store.clear()
 
@@ -1040,6 +1068,10 @@ class MainWindow(QMainWindow):
             equity=float(ai.get("equity", 0.0)),
         )
         if ok:
+            # Heartbeat tekrar basarili oldu — onceki uyariyi temizle
+            if getattr(self, "_heartbeat_warned", False):
+                self._log_msg("✓ Server tekrar erisilebilir")
+                self._heartbeat_warned = False
             days = body.get("days_remaining")
             if days is not None:
                 license_store.update_meta(days_remaining=days)
@@ -1048,10 +1080,26 @@ class MainWindow(QMainWindow):
                     f"⚠ Lisans uyarısı: {days} gün kaldı"
                 )
         else:
-            # Server reddederse → lisans iptal/expired olmuş olabilir
-            detail = body.get("detail") or body.get("error") or ""
-            if detail:
-                self._log_msg(f"⚠ Heartbeat reddi: {detail}")
+            # ok=False — network timeout vs gercek red ayir.
+            # GECICI hatalar (timeout, sunucuya ulasilamadi) → SESSIZ (kullanici
+            # her dakika "Heartbeat reddi" log'u gormesin). Gercek red varsa logla.
+            detail = (body.get("detail") or body.get("error") or "").lower()
+            is_network = (
+                "timed out" in detail or "ulasilamadi" in detail
+                or "sunucu" in detail or "connection" in detail
+                or not detail
+            )
+            is_real_reject = (
+                "lisans" in detail or "pasif" in detail
+                or "dolmus" in detail or "gecersiz" in detail
+                or "yetkisiz" in detail or "cihaz" in detail
+            )
+            if is_real_reject and not is_network:
+                # Gercek red — kullaniciya bildir (sadece 1 kez)
+                if not getattr(self, "_heartbeat_warned", False):
+                    self._log_msg(f"⚠ Heartbeat reddi: {detail}")
+                    self._heartbeat_warned = True
+            # Network hatalari sessiz — server geri gelince otomatik recover
 
     def _verify_account_lock(self, account_info: dict) -> None:
         """İlk açılışsa kilitle, değilse doğrula."""
