@@ -145,25 +145,22 @@ a = Analysis(
 )
 pyz = PYZ(a.pure)
 
+# ONEDIR MODE: tek dosya yerine dist/GOLDSAM_V2/ klasoru olusturur.
+# - DLL'ler exe yaninda durur (python312.dll, _internal/...)
+# - %TEMP%\_MEI extract YOK -> "Failed to load Python DLL" hatasi MIMARI
+#   olarak imkansiz
+# - Aciliş çok hızlı (extract yok)
+# - Self-update: zip-based (klasor icerigi degistir)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
+    exclude_binaries=True,   # KRITIK: binaries COLLECT'e gider, exe içine değil
     name="GOLDSAM_V2",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
-    upx_exclude=[
-        "Qt6Core.dll", "Qt6Gui.dll", "Qt6Widgets.dll", "Qt6Network.dll",
-        "VCRUNTIME140.dll", "VCRUNTIME140_1.dll",
-        "python312.dll",
-        # MT5 .pyd UPX ile sikistirma — ImportError yapabilir
-        "_core.cp312-win_amd64.pyd",
-    ],
-    runtime_tmpdir=None,
+    upx=False,               # onedir'de UPX'e gerek yok (klasor zaten ayri)
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -171,4 +168,14 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=None,
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    name="GOLDSAM_V2",   # klasor adi: dist/GOLDSAM_V2/
 )

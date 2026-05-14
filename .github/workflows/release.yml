@@ -1,18 +1,18 @@
-name: Build & Release exe
+name: Build & Release exe (onedir)
 
 # Tag push'unda otomatik build + release. Kullanim:
-#   git tag v2.0.2
+#   git tag v2.1.0
 #   git push --tags
-# -> GitHub Actions Windows runner'da exe build eder, release olusturur,
-#    asset olarak GOLDSAM_V2.exe yukler. Bot icindeki "Guncelle" butonu
-#    bu release'i otomatik bulur.
+# -> Windows runner build (onedir) -> dist/GOLDSAM_V2/ klasoru -> ZIP'le ->
+#    Release create + asset upload (GOLDSAM_V2.zip).
+# Bot icindeki "Guncelle" butonu bu ZIP'i otomatik indir + extract eder.
 
 on:
   push:
     tags: ['v*.*.*']
 
 permissions:
-  contents: write  # release olusturma + asset upload icin
+  contents: write
 
 jobs:
   build:
@@ -32,18 +32,25 @@ jobs:
           python -m pip install --upgrade pip
           pip install pyinstaller PySide6 MetaTrader5 cryptography numpy
 
-      - name: Build exe (PyInstaller)
+      - name: Build (onedir mode)
         run: python -m PyInstaller --clean --noconfirm GOLDSAM_V2.spec
 
-      - name: Verify exe exists
+      - name: Verify onedir output
         run: |
-          if (-not (Test-Path dist/GOLDSAM_V2.exe)) { exit 1 }
-          Get-Item dist/GOLDSAM_V2.exe | Select-Object Name, Length
+          if (-not (Test-Path dist/GOLDSAM_V2/GOLDSAM_V2.exe)) { exit 1 }
+          Get-ChildItem dist/GOLDSAM_V2 | Select-Object Name, Length
+          (Get-ChildItem dist/GOLDSAM_V2 -Recurse | Measure-Object Length -Sum).Sum / 1MB
 
-      - name: Create Release + Upload exe
+      - name: Zip onedir folder
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "dist/GOLDSAM_V2" -DestinationPath "dist/GOLDSAM_V2.zip" -Force
+          Get-Item dist/GOLDSAM_V2.zip | Select-Object Name, Length
+
+      - name: Create Release + Upload zip
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/GOLDSAM_V2.exe
+          files: dist/GOLDSAM_V2.zip
           name: ${{ github.ref_name }}
           tag_name: ${{ github.ref_name }}
           generate_release_notes: true
