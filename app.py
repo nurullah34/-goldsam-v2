@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame,
     QPushButton, QCheckBox, QDoubleSpinBox, QRadioButton, QButtonGroup,
     QPlainTextEdit, QMessageBox, QDialog, QTableWidget, QTableWidgetItem,
-    QComboBox, QHeaderView, QLineEdit
+    QComboBox, QHeaderView, QLineEdit, QScrollArea, QApplication
 )
 
 from core import license_store, settings as user_settings
@@ -819,11 +819,19 @@ class MainWindow(QMainWindow):
         self._varlik_label: Optional[QLabel] = None
         self._stats_timer: Optional[QTimer] = None
 
+        # Ana içerik (root) — küçük ekranlarda scroll yapacak QScrollArea içine
+        # konuluyor ki 6 kart yan yana sığmazsa kullanıcı kaydırabilsin.
         root = QWidget()
         layout = QVBoxLayout(root)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(10)
-        self.setCentralWidget(root)
+
+        scroll = QScrollArea()
+        scroll.setWidget(root)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background-color: #0d1117; border: none; }")
+        self.setCentralWidget(scroll)
 
         layout.addWidget(self._build_top_status())
         layout.addWidget(self._build_strategies_row())
@@ -831,6 +839,22 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._build_stats_panel())
         layout.addWidget(self._build_log_panel(), stretch=1)
         layout.addLayout(self._build_footer())
+
+        # Pencereyi ekran boyutuna göre fit et (max %90, min 900x720)
+        screen = QApplication.primaryScreen()
+        if screen is not None:
+            avail = screen.availableGeometry()
+            w = min(1280, int(avail.width() * 0.90))
+            h = min(900, int(avail.height() * 0.90))
+            # Ekrana sığacak şekilde küçük olsun (laptop full HD'de ~1366x768)
+            self.resize(max(900, w), max(620, h))
+            # Pencere ekran ortasına gelsin
+            self.move(
+                avail.x() + (avail.width() - self.width()) // 2,
+                avail.y() + (avail.height() - self.height()) // 2,
+            )
+        # Minimum içerik boyutu (scroll bar çıkabilsin diye küçük tutuldu)
+        self.setMinimumSize(820, 560)
 
         # Önce kaydedilmiş ayarları yükle (UI dolsun)
         QTimer.singleShot(50, self._load_all_settings)
