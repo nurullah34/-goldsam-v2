@@ -1316,8 +1316,7 @@ class MainWindow(QMainWindow):
 
         # Bilgi notu — LONG/SHORT trailing açıkken bot dışı pozisyonlar da yönetilir
         info_lbl = QLabel("ℹ️  Bot dışı açık işlemler de trailing ile yönetilir (LONG/SHORT açıkken)")
-        info_lbl.setObjectName("KasaHint")
-        info_lbl.setStyleSheet("color: #8b949e; font-style: italic; padding: 2px 4px;")
+        info_lbl.setStyleSheet("color: #c9d1d9; padding: 2px 4px;")
         inner_v.addWidget(info_lbl)
 
         # LONG Trailing — 8T LONG, MULTI100, MICRO-S, GENIS için
