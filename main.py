@@ -4,12 +4,17 @@ import shutil
 import sys
 from pathlib import Path
 
+BASE_DIR = Path(__file__).resolve().parent
+# Embedded Python (._pth ile) script dizinini sys.path'e EKLEMİYOR — biz ekleyelim.
+# Normal Python kurulumlarında zaten ekli, harmsız no-op.
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
+
 from PySide6.QtWidgets import QApplication
 
 from app import MainWindow
 from version import APP_NAME
 
-BASE_DIR = Path(__file__).resolve().parent
 PID_FILE = BASE_DIR / ".app.pid"
 UPDATE_BAT = BASE_DIR / "_update.bat"
 UPDATE_TMP = BASE_DIR / ".update_tmp"
