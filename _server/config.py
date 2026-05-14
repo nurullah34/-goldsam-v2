@@ -20,6 +20,11 @@ API_PORT = int(os.environ.get("API_PORT", "8000"))
 DEFAULT_TRAIL_ACTIVATE_USD = 1.0
 DEFAULT_SL_USD = 75.0
 
-# DB
-DATA_DIR = Path(os.environ.get("DATA_DIR", "data"))
+# Sunucu kodu dizinini sabit referans — cwd ne olursa olsun ayni yere yaz
+SERVER_DIR = Path(__file__).resolve().parent
+
+# DB — ABSOLUTE path olarak hesapla (cwd'den bagimsiz). DATA_DIR env'den
+# override edilebilir ama default olarak _server/data altinda kalir, boylelikle
+# self_update data/'yi korurken admin_token.txt da kalir.
+DATA_DIR = Path(os.environ.get("DATA_DIR", str(SERVER_DIR / "data")))
 DB_PATH = DATA_DIR / "goldsam.sqlite"

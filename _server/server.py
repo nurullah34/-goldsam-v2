@@ -32,14 +32,17 @@ from engine import Engine
 
 ADMIN_TOKEN = os.environ.get("GOLDSAM_ADMIN_TOKEN", "")
 if not ADMIN_TOKEN:
-    ADMIN_TOKEN = secrets.token_urlsafe(24)
-    # Disk'e yaz (ilk açılışta üret + persistent)
+    # Disk'e bak — varsa eski token'i kullan, YOKSA yeni uret + kaydet.
+    # Eski mantikta her acilista yeni secrets.token_urlsafe() uretiliyordu;
+    # eger DATA_DIR cwd-relative yanlis yerde olsaydi (config bug) yeni
+    # token'i oraya yazip eskiyi okumuyordu. Su an DATA_DIR absolute (config.py).
     from config import DATA_DIR
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     token_path = DATA_DIR / "admin_token.txt"
     if token_path.exists():
         ADMIN_TOKEN = token_path.read_text(encoding="utf-8").strip()
-    else:
+    if not ADMIN_TOKEN:  # dosya yoktu veya bostu
+        ADMIN_TOKEN = secrets.token_urlsafe(24)
         token_path.write_text(ADMIN_TOKEN, encoding="utf-8")
 
 
@@ -60,7 +63,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="GoldSam V2 Strategy Server",
-    version="1.1.1",
+    version="1.1.2",
     lifespan=lifespan,
 )
 
@@ -147,7 +150,7 @@ def require_admin(x_admin_token: Optional[str] = Header(None)) -> None:
 def root():
     return {
         "service": "GoldSam V2 Strategy Server",
-        "version": "1.1.1",
+        "version": "1.1.2",
         "status": "running",
     }
 
