@@ -167,6 +167,7 @@ QPushButton#StartBtn { background-color: #238636; border-color: #2ea043; color: 
 QPushButton#StartBtn:hover { background-color: #2ea043; }
 QPushButton#StopBtn  { background-color: #6e7681; border-color: #8b949e; color: white; }
 QPushButton#ExitBtn  { background-color: #da3633; border-color: #f85149; color: white; }
+QPushButton#ZoomBtn  { padding: 8px 6px; font-weight: 700; font-family: 'Segoe UI'; }
 
 QPlainTextEdit#LogText {
     background-color: #010409;
@@ -784,6 +785,9 @@ class MainWindow(QMainWindow):
         self._license_ok: bool = False      # Lisans doğrulanmadan bot başlamaz
         # Heartbeat — 60 sn'de bir VPS'e durum bildir
         self._hb_timer: Optional[QTimer] = None
+        # Zoom level (font size scale) — kullanıcı A+/A− ile değiştirir
+        self._zoom_step: int = 0   # -5..+5, her step ~%10
+        self._base_font_pt: float = 9.0    # Qt default
 
         # Strateji kartları
         self.card_8t_long = StrategyCard("8T LONG")
@@ -1284,6 +1288,32 @@ class MainWindow(QMainWindow):
             # 3 sn bekle — yeni process'in Qt penceresi açılmaya zaman bulsun
             QTimer.singleShot(3000, self.close)
 
+    # ─── Zoom (Yakınlaştırma/Uzaklaştırma) ────────────────────
+    def _apply_zoom(self, delta: int) -> None:
+        """delta=+1 yakınlaştır, -1 uzaklaştır, 0 sıfırla.
+
+        Her adım %10. Min -5 (×0.50), max +8 (×1.80). QApplication.font()
+        ile değişir — tüm widget'lar otomatik scale eder.
+        """
+        if delta == 0:
+            self._zoom_step = 0
+        else:
+            self._zoom_step = max(-5, min(8, self._zoom_step + delta))
+
+        scale = 1.0 + (self._zoom_step * 0.10)
+        new_pt = self._base_font_pt * scale
+
+        app = QApplication.instance()
+        if app is not None:
+            f = app.font()
+            f.setPointSizeF(new_pt)
+            app.setFont(f)
+            # Mevcut açık widget'ların hepsi yeni font'u alsın (cascade)
+            for w in app.allWidgets():
+                w.setFont(f)
+
+        self._log_msg(f"🔍 Zoom: %{int(scale*100)} (step {self._zoom_step:+d})")
+
     # ─── UI BUILD ─────────────────────────────────────────────
     def _build_top_status(self) -> QFrame:
         frame = QFrame()
@@ -1492,6 +1522,23 @@ class MainWindow(QMainWindow):
         update_btn.setMinimumHeight(36)
         update_btn.clicked.connect(self._check_update)
         h.addWidget(update_btn)
+
+        # Zoom in/out — yakınlaştırma/uzaklaştırma
+        zoom_out_btn = QPushButton("A−")
+        zoom_out_btn.setObjectName("ZoomBtn")
+        zoom_out_btn.setMinimumHeight(36)
+        zoom_out_btn.setMinimumWidth(38)
+        zoom_out_btn.setToolTip("Uzaklaştır (yazıları küçült)")
+        zoom_out_btn.clicked.connect(lambda: self._apply_zoom(-1))
+        h.addWidget(zoom_out_btn)
+
+        zoom_in_btn = QPushButton("A+")
+        zoom_in_btn.setObjectName("ZoomBtn")
+        zoom_in_btn.setMinimumHeight(36)
+        zoom_in_btn.setMinimumWidth(38)
+        zoom_in_btn.setToolTip("Yakınlaştır (yazıları büyült)")
+        zoom_in_btn.clicked.connect(lambda: self._apply_zoom(+1))
+        h.addWidget(zoom_in_btn)
 
         exit_btn = QPushButton("Çıkış")
         exit_btn.setObjectName("ExitBtn")

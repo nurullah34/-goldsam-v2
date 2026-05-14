@@ -80,6 +80,34 @@ def main() -> int:
     qt.setApplicationName(APP_NAME)
     qt.setOrganizationName("GOLDSAM")
 
+    # ─── KOYU TEMA ZORLA ──────────────────────────────────────
+    # Windows light/dark moduna BAKMAKSIZIN bot her zaman dark.
+    # QPalette ile QMessageBox, QInputDialog, dropdown'lar dahil her şey
+    # koyu render edilir (sadece stylesheet yeterli değil — bazı dialog'lar
+    # sistem palette'i kullanır).
+    from PySide6.QtGui import QPalette, QColor
+    from PySide6.QtCore import Qt
+    qt.setStyle("Fusion")
+    palette = QPalette()
+    palette.setColor(QPalette.Window,          QColor("#0d1117"))
+    palette.setColor(QPalette.WindowText,      QColor("#e6edf3"))
+    palette.setColor(QPalette.Base,            QColor("#161b22"))
+    palette.setColor(QPalette.AlternateBase,   QColor("#21262d"))
+    palette.setColor(QPalette.ToolTipBase,     QColor("#161b22"))
+    palette.setColor(QPalette.ToolTipText,     QColor("#e6edf3"))
+    palette.setColor(QPalette.Text,            QColor("#e6edf3"))
+    palette.setColor(QPalette.Button,          QColor("#21262d"))
+    palette.setColor(QPalette.ButtonText,      QColor("#e6edf3"))
+    palette.setColor(QPalette.BrightText,      QColor("#f85149"))
+    palette.setColor(QPalette.Link,            QColor("#58a6ff"))
+    palette.setColor(QPalette.Highlight,       QColor("#1f6feb"))
+    palette.setColor(QPalette.HighlightedText, QColor("#ffffff"))
+    palette.setColor(QPalette.PlaceholderText, QColor("#8b949e"))
+    palette.setColor(QPalette.Disabled, QPalette.WindowText,  QColor("#484f58"))
+    palette.setColor(QPalette.Disabled, QPalette.Text,        QColor("#484f58"))
+    palette.setColor(QPalette.Disabled, QPalette.ButtonText,  QColor("#484f58"))
+    qt.setPalette(palette)
+
     win = MainWindow()
     win.show()
 
