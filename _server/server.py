@@ -63,7 +63,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="GoldSam V2 Strategy Server",
-    version="1.1.2",
+    version="1.1.3",
     lifespan=lifespan,
 )
 
@@ -150,7 +150,7 @@ def require_admin(x_admin_token: Optional[str] = Header(None)) -> None:
 def root():
     return {
         "service": "GoldSam V2 Strategy Server",
-        "version": "1.1.2",
+        "version": "1.1.3",
         "status": "running",
     }
 

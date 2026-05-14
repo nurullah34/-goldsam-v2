@@ -35,6 +35,7 @@ def _migrate_v1_to_v2(c) -> None:
 def init_db() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     with _conn() as c:
+        # 1) Tablolari yarat (CREATE TABLE IF NOT EXISTS — eski tabloyu degistirmez)
         c.executescript("""
         CREATE TABLE IF NOT EXISTS signals (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -47,32 +48,25 @@ def init_db() -> None:
             comment     TEXT,
             trail_activate_usd REAL NOT NULL DEFAULT 1.0,
             created_at  TEXT NOT NULL,
-            picked_at   TEXT,        -- bot tarafindan alindi
-            consumed_by TEXT          -- agent_token
+            picked_at   TEXT,
+            consumed_by TEXT
         );
-        CREATE INDEX IF NOT EXISTS idx_signals_created ON signals(created_at);
-        CREATE INDEX IF NOT EXISTS idx_signals_picked ON signals(picked_at);
 
         CREATE TABLE IF NOT EXISTS licenses (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            license_key     TEXT UNIQUE,           -- 10-char kullanici-dostu, ornek: K7M-3P9-X2L
-            agent_token     TEXT UNIQUE NOT NULL,  -- bot icin, login sonrasi
+            license_key     TEXT UNIQUE,
+            agent_token     TEXT UNIQUE NOT NULL,
             mt5_login       INTEGER NOT NULL,
             mt5_server      TEXT,
             customer_name   TEXT,
             expires_at      TEXT,
             is_active       INTEGER NOT NULL DEFAULT 1,
-            device_id       TEXT,                  -- ilk login'de bind edilen cihaz
-            device_name     TEXT,                  -- bilgisayar adi (PC name)
-            bound_at        TEXT,                  -- cihaza bind zamani
+            device_id       TEXT,
+            device_name     TEXT,
+            bound_at        TEXT,
             created_at      TEXT NOT NULL,
             last_heartbeat  TEXT
         );
-        CREATE INDEX IF NOT EXISTS idx_lic_token ON licenses(agent_token);
-        CREATE INDEX IF NOT EXISTS idx_lic_login ON licenses(mt5_login);
-        CREATE INDEX IF NOT EXISTS idx_lic_key   ON licenses(license_key);
-        -- Eski tablodan eksikleri eklemek icin (idempotent)
-        -- SQLite ALTER TABLE eksikleri: try-except mantigi Python tarafinda
 
         CREATE TABLE IF NOT EXISTS trade_reports (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -93,10 +87,23 @@ def init_db() -> None:
             status      TEXT,
             created_at  TEXT NOT NULL
         );
-        CREATE INDEX IF NOT EXISTS idx_tr_token ON trade_reports(agent_token);
-        CREATE INDEX IF NOT EXISTS idx_tr_signal ON trade_reports(signal_id);
         """)
+
+        # 2) Migration — eski v1 tablosuna eksik kolonlari ekle (license_key,
+        #    device_id, device_name, bound_at, customer_email). Index'lerden ONCE
+        #    yapmali, yoksa "no such column: license_key" diye patlar.
         _migrate_v1_to_v2(c)
+
+        # 3) Index'leri yarat — artik kolonlar kesin var
+        c.executescript("""
+        CREATE INDEX IF NOT EXISTS idx_signals_created ON signals(created_at);
+        CREATE INDEX IF NOT EXISTS idx_signals_picked  ON signals(picked_at);
+        CREATE INDEX IF NOT EXISTS idx_lic_token       ON licenses(agent_token);
+        CREATE INDEX IF NOT EXISTS idx_lic_login       ON licenses(mt5_login);
+        CREATE INDEX IF NOT EXISTS idx_lic_key         ON licenses(license_key);
+        CREATE INDEX IF NOT EXISTS idx_tr_token        ON trade_reports(agent_token);
+        CREATE INDEX IF NOT EXISTS idx_tr_signal       ON trade_reports(signal_id);
+        """)
 
 
 @contextmanager
