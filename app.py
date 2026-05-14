@@ -789,7 +789,6 @@ class MainWindow(QMainWindow):
         self._detected_symbol: Optional[str] = None
         self._kasa_concurrent_group: Optional[QButtonGroup] = None
         self._kasa_weekend_chk: Optional[QCheckBox] = None
-        self._kasa_manuel_chk: Optional[QCheckBox] = None
         self._kasa_trail_long_chk: Optional[QCheckBox] = None
         self._kasa_trail_short_chk: Optional[QCheckBox] = None
         self._kasa_trail_long_input: Optional[QDoubleSpinBox] = None
@@ -1069,9 +1068,8 @@ class MainWindow(QMainWindow):
         short_on = bool(self._kasa_trail_short_chk and self._kasa_trail_short_chk.isChecked())
         self.monitor.set_trail_activate(trail_long, trail_short)
         self.monitor.set_trail_enabled(long_on, short_on)
-        self.monitor.set_manage_manual(
-            bool(self._kasa_manuel_chk and self._kasa_manuel_chk.isChecked())
-        )
+        # Manuel pozisyonlar da LONG/SHORT açıkken otomatik trail edilir
+        self.monitor.set_manage_manual(True)
         if not long_on:
             self._log_msg("⚠️ LONG trailing KAPALI — BUY pozisyonlar trailing yapılmayacak.")
         if not short_on:
@@ -1133,9 +1131,6 @@ class MainWindow(QMainWindow):
         # Weekend protection
         if self._kasa_weekend_chk is not None:
             self._kasa_weekend_chk.setChecked(bool(kasa.get("weekend_protection", False)))
-        # Bot dışı açık işlemleri de trail
-        if self._kasa_manuel_chk is not None:
-            self._kasa_manuel_chk.setChecked(bool(kasa.get("manual_positions_trail", False)))
         # LONG / SHORT trailing enabled (yeşil göstergeler)
         if self._kasa_trail_long_chk is not None:
             self._kasa_trail_long_chk.setChecked(bool(kasa.get("trail_long_enabled", True)))
@@ -1175,8 +1170,6 @@ class MainWindow(QMainWindow):
                 "concurrent_limit":       self._kasa_concurrent_limit(),
                 "weekend_protection":     (self._kasa_weekend_chk.isChecked()
                                            if self._kasa_weekend_chk else False),
-                "manual_positions_trail": (self._kasa_manuel_chk.isChecked()
-                                           if self._kasa_manuel_chk else False),
                 "trail_long_enabled":  (self._kasa_trail_long_chk.isChecked()
                                         if self._kasa_trail_long_chk else True),
                 "trail_short_enabled": (self._kasa_trail_short_chk.isChecked()
@@ -1321,15 +1314,11 @@ class MainWindow(QMainWindow):
         inner_v.setContentsMargins(10, 8, 10, 8)
         inner_v.setSpacing(6)
 
-        # Bot dışı açık işlemleri de yönet — trailing alanına bilgi olarak
-        self._kasa_manuel_chk = QCheckBox("Bot dışı açık işlemleri de trailing ile yönet")
-        self._kasa_manuel_chk.setObjectName("DotCheck")
-        self._kasa_manuel_chk.setChecked(False)
-        manuel_hbox = QHBoxLayout()
-        manuel_hbox.setSpacing(8)
-        manuel_hbox.addWidget(self._kasa_manuel_chk)
-        manuel_hbox.addStretch(1)
-        inner_v.addLayout(self._kasa_row("Manuel\nişlemler", manuel_hbox))
+        # Bilgi notu — LONG/SHORT trailing açıkken bot dışı pozisyonlar da yönetilir
+        info_lbl = QLabel("ℹ️  Bot dışı açık işlemler de trailing ile yönetilir (LONG/SHORT açıkken)")
+        info_lbl.setObjectName("KasaHint")
+        info_lbl.setStyleSheet("color: #8b949e; font-style: italic; padding: 2px 4px;")
+        inner_v.addWidget(info_lbl)
 
         # LONG Trailing — 8T LONG, MULTI100, MICRO-S, GENIS için
         self._kasa_trail_long_chk = QCheckBox("Aktif")
