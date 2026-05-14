@@ -152,7 +152,10 @@ rmdir /S /Q "{staged_dir}" 2>NUL
 :: 5) Yeni exe'yi baslat
 start "" "{install_dir}\\{exe_name}"
 
-:: 6) Bu bat'i sil
+:: 6) VBS wrapper'i sil (varsa)
+del /q "{bat_path.with_suffix('.vbs')}" 2>NUL
+
+:: 7) Bu bat'i sil
 (goto) 2>nul & del "%~f0"
 """
     bat_path.write_text(bat, encoding="utf-8")
@@ -164,16 +167,31 @@ start "" "{install_dir}\\{exe_name}"
 
 
 def _spawn_bat(bat_path: Path) -> bool:
+    """Bat'i KESIN gorunmez calistir (Windows Terminal default kullanildiginda
+    CREATE_NO_WINDOW yeterli olmuyor — kullanici bos cmd penceresi goruyor).
+
+    Cozum: VBS wrapper yaz, WScript.Shell.Run window=0 ile cmd'yi gizli
+    baslatir, wscript'i Popen ile detached fork ederiz. Bat invisible calisir,
+    swap tamamlandiginda her sey kendiliginden temizlenir.
+    """
     try:
+        # 1) VBS wrapper olustur — bat'i window=0 (hidden) baslatir
+        vbs_path = bat_path.with_suffix(".vbs")
+        # Path'leri VBS string'inde escape — backslash'ler ikiye katlanmali
+        bat_for_vbs = str(bat_path).replace('"', '""')
+        vbs_content = (
+            'Set s = CreateObject("WScript.Shell")\r\n'
+            f's.Run "cmd /c """{bat_for_vbs}"""", 0, False\r\n'
+        )
+        vbs_path.write_text(vbs_content, encoding="ascii")
+
+        # 2) wscript.exe ile VBS'i detached fork et
         DETACHED_PROCESS = 0x00000008
-        CREATE_NEW_PROCESS_GROUP = 0x00000200
         CREATE_NO_WINDOW = 0x08000000
         subprocess.Popen(
-            ["cmd", "/c", str(bat_path)],
+            ["wscript.exe", str(vbs_path)],
             cwd=str(bat_path.parent),
-            creationflags=(
-                DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW
-            ),
+            creationflags=DETACHED_PROCESS | CREATE_NO_WINDOW,
             close_fds=True,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
@@ -181,7 +199,22 @@ def _spawn_bat(bat_path: Path) -> bool:
         )
         return True
     except Exception:
-        return False
+        # Fallback: dogrudan bat (window gozukebilir ama yine de calisir)
+        try:
+            DETACHED_PROCESS = 0x00000008
+            CREATE_NO_WINDOW = 0x08000000
+            subprocess.Popen(
+                ["cmd", "/c", str(bat_path)],
+                cwd=str(bat_path.parent),
+                creationflags=DETACHED_PROCESS | CREATE_NO_WINDOW,
+                close_fds=True,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            return True
+        except Exception:
+            return False
 
 
 def download_and_apply(
