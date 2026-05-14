@@ -24,6 +24,7 @@ from strategies.dengeli_8t import Dengeli8T
 from strategies.multi100.strategy import Multi100Strategy
 from strategies.micro_sweep.strategy import MicroSweepStrategy
 from strategies.goldsell.strategy import GoldSellStrategy
+from strategies.genis.strategy import GenisStrategy
 from version import VERSION, APP_NAME
 
 
@@ -183,9 +184,11 @@ class ReportDialog(QDialog):
         "MULTI100": {20270011, 20270012, 20270013, 20270014},
         "MICRO-S":  set(range(20270101, 20270128)),
         "GOLDS":    {20270200},
+        "GENIS":    {20270300},
     }
     GROUPS["Hepsi"] = (
-        GROUPS["8T"] | GROUPS["MULTI100"] | GROUPS["MICRO-S"] | GROUPS["GOLDS"]
+        GROUPS["8T"] | GROUPS["MULTI100"] | GROUPS["MICRO-S"]
+        | GROUPS["GOLDS"] | GROUPS["GENIS"]
     )
 
     @staticmethod
@@ -203,6 +206,7 @@ class ReportDialog(QDialog):
             if 12 <= off <= 18: return f"MS-E{off-11:02d}"
             if 19 <= off <= 27: return f"MS-S{off-18:02d}"
         if magic == 20270200: return "GOLDS"
+        if magic == 20270300: return "GENIS"
         return f"#{magic}"
 
     def __init__(self, parent=None, default_period: int = 7,
@@ -287,7 +291,7 @@ class ReportDialog(QDialog):
         flt.addWidget(QLabel("Strateji:"))
         self.cb_group = QComboBox()
         # "Tümü" = bot + manuel, "Hepsi" = sadece bot, "Manuel" = sadece manuel
-        for gname in ("Tümü", "Hepsi (Bot)", "8T", "MULTI100", "MICRO-S", "GOLDS", "Manuel"):
+        for gname in ("Tümü", "Hepsi (Bot)", "8T", "MULTI100", "MICRO-S", "GOLDS", "GENIS", "Manuel"):
             self.cb_group.addItem(gname)
         # default_group eski isimle gelirse uyumlu kal
         compat = {"Hepsi": "Hepsi (Bot)"}.get(default_group, default_group)
@@ -488,7 +492,8 @@ class ReportDialog(QDialog):
                 except Exception:
                     pass
                 return 20270101  # generic MICRO-S
-            if cmt.startswith("GS_"): return 20270200
+            if cmt.startswith("GS_"):     return 20270200
+            if cmt.startswith("GENIS_"):  return 20270300
             return 0
 
         for pid, rec in per_pos.items():
@@ -753,6 +758,7 @@ class MainWindow(QMainWindow):
         self.card_multi = StrategyCard("MULTI100")
         self.card_micro = StrategyCard("MICRO-S")
         self.card_goldsell = StrategyCard("GOLDS")
+        self.card_genis = StrategyCard("GENIS")
 
         # UI element referansları
         self._dot_mt5: Optional[QLabel] = None
@@ -771,6 +777,7 @@ class MainWindow(QMainWindow):
         self._stats_multi: Optional[QLabel] = None
         self._stats_micro: Optional[QLabel] = None
         self._stats_goldsell: Optional[QLabel] = None
+        self._stats_genis: Optional[QLabel] = None
         self._stats_manual: Optional[QLabel] = None
         self._stats_header: Optional[QLabel] = None
         self._stats_period_group: Optional[QButtonGroup] = None
@@ -1010,6 +1017,26 @@ class MainWindow(QMainWindow):
                     f"GOLDS aktif | {symbol} | lot={sgs['lot']} SL=${sgs['sl_usd']}"
                 )
 
+        sgn = self.card_genis.settings()
+        if sgn["enabled"]:
+            if sgn["lot"] <= 0:
+                self._log_msg("GENIS: lot 0 — strateji başlatılamadı.")
+            else:
+                strat = GenisStrategy(symbol=symbol)
+                strat.apply_settings(
+                    enabled=True,
+                    lot=sgn["lot"],
+                    sl_usd=sgn["sl_usd"],
+                    trail_activate_usd=trail,
+                    avg_threshold_usd=sgn["avg_threshold_usd"],
+                    avg_lot=sgn["avg_lot"],
+                )
+                self.engine.register(strat)
+                active_count += 1
+                self._log_msg(
+                    f"GENIS aktif | {symbol} | lot={sgn['lot']} SL=${sgn['sl_usd']}"
+                )
+
         if active_count == 0:
             self._log_msg("Hiç strateji aktif değil — kartlardan en az 1 tane seç.")
             return
@@ -1057,6 +1084,7 @@ class MainWindow(QMainWindow):
         self.card_multi.load_settings(strats.get("multi100", {}))
         self.card_micro.load_settings(strats.get("micro_sweep", {}))
         self.card_goldsell.load_settings(strats.get("goldsell", {}))
+        self.card_genis.load_settings(strats.get("genis", {}))
 
         kasa = s.get("kasa", {})
         # Concurrent limit
@@ -1092,6 +1120,7 @@ class MainWindow(QMainWindow):
                 "multi100":    self.card_multi.settings(),
                 "micro_sweep": self.card_micro.settings(),
                 "goldsell":    self.card_goldsell.settings(),
+                "genis":       self.card_genis.settings(),
             },
             "kasa": {
                 "concurrent_limit":       self._kasa_concurrent_limit(),
@@ -1192,8 +1221,12 @@ class MainWindow(QMainWindow):
         mid.addWidget(self.card_micro)
         v.addLayout(mid)
 
-        # Alt satır: GoldSell (tek başına, tam genişlik)
-        v.addWidget(self.card_goldsell)
+        # Alt satır: GOLDS | GENIS
+        bot = QHBoxLayout()
+        bot.setSpacing(14)
+        bot.addWidget(self.card_goldsell)
+        bot.addWidget(self.card_genis)
+        v.addLayout(bot)
         return frame
 
     def _build_kasa_panel(self) -> QFrame:
@@ -1386,9 +1419,10 @@ class MainWindow(QMainWindow):
         self._stats_multi = QLabel("MULTI100 :  —")
         self._stats_micro = QLabel("MICRO-S  :  —")
         self._stats_goldsell = QLabel("GOLDS    :  —")
+        self._stats_genis = QLabel("GENIS    :  —")
         self._stats_manual = QLabel("MANUEL   :  —")
         for lbl in (self._stats_8t, self._stats_multi, self._stats_micro,
-                    self._stats_goldsell, self._stats_manual):
+                    self._stats_goldsell, self._stats_genis, self._stats_manual):
             lbl.setObjectName("StatsRow")
             v.addWidget(lbl)
         return box
@@ -1462,8 +1496,10 @@ class MainWindow(QMainWindow):
             "MULTI100": {20270011, 20270012, 20270013, 20270014},
             "MICRO-S":  set(range(20270101, 20270128)),
             "GOLDS":    {20270200},
+            "GENIS":    {20270300},
         }
-        bot_all = groups["8T"] | groups["MULTI100"] | groups["MICRO-S"] | groups["GOLDS"]
+        bot_all = (groups["8T"] | groups["MULTI100"] | groups["MICRO-S"]
+                   | groups["GOLDS"] | groups["GENIS"])
         stats = {k: {"n": 0, "w": 0, "l": 0, "net": 0.0}
                  for k in list(groups.keys()) + ["MANUEL"]}
 
@@ -1502,11 +1538,12 @@ class MainWindow(QMainWindow):
                     if mg in gset:
                         return gname
             # Fallback: magic kaybolduysa comment prefix'inden
-            if cmt.startswith("8T_"):    return "8T"
-            if cmt.startswith("M100_"):  return "MULTI100"
-            if cmt.startswith("MS-"):    return "MICRO-S"
-            if cmt.startswith("MS_"):    return "MICRO-S"  # underscore varyant
-            if cmt.startswith("GS_"):    return "GOLDS"
+            if cmt.startswith("8T_"):     return "8T"
+            if cmt.startswith("M100_"):   return "MULTI100"
+            if cmt.startswith("MS-"):     return "MICRO-S"
+            if cmt.startswith("MS_"):     return "MICRO-S"  # underscore varyant
+            if cmt.startswith("GS_"):     return "GOLDS"
+            if cmt.startswith("GENIS_"):  return "GENIS"
             return "MANUEL"
 
         for pid, rec in per_pos.items():
@@ -1543,6 +1580,8 @@ class MainWindow(QMainWindow):
             self._stats_micro.setText(_fmt("MICRO-S", stats["MICRO-S"]))
         if self._stats_goldsell is not None:
             self._stats_goldsell.setText(_fmt("GOLDS", stats["GOLDS"]))
+        if self._stats_genis is not None:
+            self._stats_genis.setText(_fmt("GENIS", stats["GENIS"]))
         if self._stats_manual is not None:
             self._stats_manual.setText(_fmt("MANUEL", stats["MANUEL"]))
 
