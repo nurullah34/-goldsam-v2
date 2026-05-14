@@ -50,12 +50,79 @@ if not ADMIN_TOKEN:
 engine = Engine(log=print)
 
 
+def _watchdog_thread() -> None:
+    """Dahili saglik kontrol thread'i — her 60 sn:
+    1. mt5.terminal_info() cagir, 15sn timeout
+    2. Cevap yoksa: log + os._exit(1) -> BASLAT.bat goto LOOP yakalar
+    3. Engine son tick'ten 5 dakikadan fazla zaman gectiyse: exit
+
+    Bu sayede uvicorn deadlock / MT5 hang durumlarinda otomatik restart.
+    Kullaniciya RDP gerek kalmaz.
+    """
+    import threading, time, os as _os
+    from datetime import datetime as _dt
+
+    def _check_mt5_timeout(result, timeout=15):
+        """MT5 cagrisini ayri thread'de calistir, timeout uygula."""
+        finished = threading.Event()
+        ok_box = [False]
+
+        def _call():
+            try:
+                ti = bar_provider.is_connected()
+                ok_box[0] = bool(ti)
+            except Exception:
+                ok_box[0] = False
+            finally:
+                finished.set()
+
+        t = threading.Thread(target=_call, daemon=True)
+        t.start()
+        if not finished.wait(timeout=timeout):
+            return False  # timeout
+        return ok_box[0]
+
+    consecutive_fail = 0
+    while True:
+        try:
+            time.sleep(60)
+            # 1) MT5 check
+            mt5_ok = _check_mt5_timeout(None, timeout=15)
+            if not mt5_ok:
+                consecutive_fail += 1
+                print(f"[WATCHDOG] MT5 cevap vermiyor ({consecutive_fail}/3)")
+                if consecutive_fail >= 3:
+                    print("[WATCHDOG] 3+ MT5 hata - server RESTART")
+                    _os._exit(1)
+            else:
+                consecutive_fail = 0
+
+            # 2) Engine staleness check
+            last = getattr(engine, "last_tick_at", None)
+            if last:
+                try:
+                    last_dt = _dt.fromisoformat(last) if isinstance(last, str) else last
+                    age_sec = (_dt.utcnow() - last_dt).total_seconds()
+                    if age_sec > 300:  # 5 dk
+                        print(f"[WATCHDOG] Engine tick {age_sec:.0f}sn cevapsiz - RESTART")
+                        _os._exit(2)
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"[WATCHDOG] hata: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init_db()
     print(f"GoldSam Server başlatıldı")
     print(f"Admin token: {ADMIN_TOKEN}")
     engine.start()
+    # Watchdog thread'i baslat (daemon - process exit'inde otomatik kapanir)
+    import threading
+    wd = threading.Thread(target=_watchdog_thread, daemon=True, name="watchdog")
+    wd.start()
+    print("[WATCHDOG] Saglik kontrol thread'i aktif (60sn aralikla)")
     yield
     engine.stop()
     print("GoldSam Server kapandı")
@@ -63,7 +130,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="GoldSam V2 Strategy Server",
-    version="1.1.5",
+    version="1.1.6",
     lifespan=lifespan,
 )
 
@@ -150,7 +217,7 @@ def require_admin(x_admin_token: Optional[str] = Header(None)) -> None:
 def root():
     return {
         "service": "GoldSam V2 Strategy Server",
-        "version": "1.1.5",
+        "version": "1.1.6",
         "status": "running",
     }
 
@@ -188,7 +255,7 @@ def healthz():
         db_ok = False
     return {
         "ok": db_ok and mt5_ok,
-        "version": "1.1.5",
+        "version": "1.1.6",
         "mt5_connected": mt5_ok,
         "db_ok": db_ok,
         "license_count": lic_count,
