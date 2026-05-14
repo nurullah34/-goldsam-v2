@@ -20,6 +20,8 @@ from typing import Optional
 
 from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from pathlib import Path
 from pydantic import BaseModel
 
 import db
@@ -131,6 +133,15 @@ def root():
         "version": "1.0.0",
         "status": "running",
     }
+
+
+# Static HTML — V2 Sinyaller dashboard sayfasi (kriptoly menusunde linkleyebilirsin)
+@app.get("/v2-signals")
+def v2_signals_page():
+    html_path = Path(__file__).parent / "static" / "v2_signals.html"
+    if not html_path.exists():
+        raise HTTPException(status_code=404, detail="v2_signals.html bulunamadi")
+    return FileResponse(html_path, media_type="text/html")
 
 
 @app.get("/public/status")
