@@ -668,9 +668,14 @@ class ReportDialog(QDialog):
 class StrategyCard(QFrame):
     """Bir stratejinin UI kartı + ayar okuma."""
 
+    # SHORT yonlu kartlar — averajlama metni "yukselirse"
+    # (LONG: fiyat dusunce zarar, SHORT: fiyat yukselince zarar)
+    _SHORT_TITLES = {"8T SHORT", "GOLDS"}
+
     def __init__(self, title: str, parent=None) -> None:
         super().__init__(parent)
         self.setObjectName("StratCard")
+        self.title = title
         # 4 kart birebir aynı boyutta görünsün — fixed height (wrapped text dahil)
         self.setFixedHeight(130)
 
@@ -717,7 +722,10 @@ class StrategyCard(QFrame):
         right.setSpacing(6)
         right.addStretch(1)
 
-        avg_label = QLabel("Açılan işlemden kaç dolar düşerse bir işlem daha açılsın:")
+        # SHORT kartlar (8T SHORT, GOLDS) icin fiyat YUKSELDIGINDE zarar olur
+        # → "yukselirse" yaz. Diger kartlar (LONG yonlu) "duserse".
+        avg_verb = "yükselirse" if self.title in self._SHORT_TITLES else "düşerse"
+        avg_label = QLabel(f"Açılan işlemden kaç dolar {avg_verb} bir işlem daha açılsın:")
         avg_label.setObjectName("FieldLabel")
         avg_label.setWordWrap(True)
         right.addWidget(avg_label)
