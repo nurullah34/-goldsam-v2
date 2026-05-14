@@ -113,29 +113,54 @@ def _download_exe(target_path: Path, log: Callable[[str], None],
 
 
 def _write_swap_bat(exe_path: Path, new_exe_path: Path, bat_path: Path) -> None:
-    """Helper batch: 2sn bekle → eski exe sil → yeni rename → calistir → bat kendini sil."""
-    bat = f"""@echo off
-:: GOLDSAM V2 - update swap (auto-generated, kendini silen)
-timeout /t 2 /nobreak >NUL
+    """Helper batch: bekle → eski exe sil → eski _MEI* temizle → yeni rename →
+    calistir → bat kendini sil.
 
+    Sorun: PyInstaller onefile exe %TEMP%\\_MEI<rand>\\python312.dll extract eder.
+    Self-update sirasinda eski process tam kapanmazsa _MEI lock kalir, yeni exe
+    "Failed to load Python DLL" hatasi verir. Cozum:
+    1. 5 sn bekle (eski exe ve _MEI cleanup tamamlansin)
+    2. Eski _MEI klasorlerini temizle (cache cakismasi onle)
+    3. Sonra swap yap
+    """
+    bat = f"""@echo off
+:: GOLDSAM V2 - update swap (auto-generated)
+:: 5 sn bekle - eski exe atexit handler'i _MEI klasorunu temizlesin
+timeout /t 5 /nobreak >NUL
+
+:: Eski PyInstaller _MEI temp klasorlerini temizle (DLL load cakismasi onle)
+for /d %%D in ("%TEMP%\\_MEI*") do rmdir /S /Q "%%D" 2>NUL
+
+:: Eski exe'yi silmeyi 3 kez dene (file lock icin)
+set RETRY=0
 :retry
 del /q "{exe_path}" 2>NUL
 if exist "{exe_path}" (
+    set /a RETRY=%RETRY%+1
+    if %RETRY% GEQ 10 goto giveup
     timeout /t 1 /nobreak >NUL
     goto retry
 )
 
-ren "{new_exe_path.name}" "{exe_path.name}"
+:: Yeni exe'yi yerine koy (ren basarisizsa move)
+ren "{new_exe_path.name}" "{exe_path.name}" 2>NUL
 if errorlevel 1 (
     move /Y "{new_exe_path}" "{exe_path}" >NUL
 )
 
+:: Yeni exe'yi baslat
 start "" "{exe_path}"
+goto cleanup
 
+:giveup
+:: Eski exe silinemedi - yine de yeni exe'yi farkli isimle baslat
+start "" "{new_exe_path}"
+
+:cleanup
 (goto) 2>nul & del "%~f0"
 """
     bat_path.write_text(bat, encoding="utf-8")
-    # CRLF normalize
+    # CRLF normalize (Windows batch dogru parse etsin)
     with open(bat_path, "rb") as f:
         content = f.read()
     content = content.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
