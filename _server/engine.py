@@ -88,6 +88,8 @@ class Engine:
         self._heartbeat_every_ticks = max(1, 60 // max(1, TICK_INTERVAL_SEC))
         self._tick_counter = 0
         self._last_kriptoly_hb = False
+        # DUPLICATE GUARD — strategy_id → son sinyal verilen M1 bar time
+        self._last_signal_bar: dict[str, str] = {}
 
     @property
     def status(self) -> dict:
@@ -155,6 +157,20 @@ class Engine:
 
             # Magic SET olabilir (MicroSweep) — Signal'in kendi magic'i tek int
             sig_magic = int(sig.magic) if isinstance(sig.magic, int) else 0
+
+            # GUARD 1 — bu magic ile MT5'te açık pozisyon varsa atla
+            if self._has_open_position(sig_magic):
+                continue
+
+            # GUARD 2 — aynı M1 bar üzerinde bu strateji daha önce sinyal verdi mi?
+            current_bar_time = (
+                bars_by_tf.get("M1", [{}])[-1].get("time")
+                if bars_by_tf.get("M1") else None
+            )
+            strategy_id = f"{strat.display}_{sig_magic}"
+            if current_bar_time and self._last_signal_bar.get(strategy_id) == current_bar_time:
+                continue
+
             # Lot/SL/Trail sunucuda BELİRLENMEZ — bot her müşteri için kendi UI'sından okur.
             # Server sadece "ne, hangi yön, hangi strateji, hangi magic" der.
             signal_id = db.insert_signal(
@@ -168,6 +184,9 @@ class Engine:
                 trail_activate_usd=0.0,  # placeholder — bot Kasa panelinden alır
             )
             self._signal_count += 1
+            # DUPLICATE GUARD — bu bar üzerinde sinyal verildi olarak işaretle
+            if current_bar_time:
+                self._last_signal_bar[strategy_id] = current_bar_time
             side_txt = "LONG" if sig.side == "buy" else "SHORT"
             self.log(
                 f"🎯 SİNYAL #{signal_id} → {strat.display} {side_txt} "
@@ -181,6 +200,15 @@ class Engine:
         if self._tick_counter >= self._heartbeat_every_ticks:
             self._tick_counter = 0
             self._send_kriptoly_heartbeat()
+
+    def _has_open_position(self, magic: int) -> bool:
+        """GUARD 1 — VPS MT5'te bu magic ile açık pozisyon var mı?"""
+        try:
+            import MetaTrader5 as _mt5
+            positions = _mt5.positions_get(symbol=self.symbol) or []
+            return any(int(getattr(p, "magic", 0) or 0) == magic for p in positions)
+        except Exception:
+            return False
 
     def _send_kriptoly_heartbeat(self) -> None:
         try:
