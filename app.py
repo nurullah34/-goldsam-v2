@@ -840,21 +840,14 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._build_log_panel(), stretch=1)
         layout.addLayout(self._build_footer())
 
-        # Pencereyi ekran boyutuna göre fit et (max %90, min 900x720)
-        screen = QApplication.primaryScreen()
-        if screen is not None:
-            avail = screen.availableGeometry()
-            w = min(1280, int(avail.width() * 0.90))
-            h = min(900, int(avail.height() * 0.90))
-            # Ekrana sığacak şekilde küçük olsun (laptop full HD'de ~1366x768)
-            self.resize(max(900, w), max(620, h))
-            # Pencere ekran ortasına gelsin
-            self.move(
-                avail.x() + (avail.width() - self.width()) // 2,
-                avail.y() + (avail.height() - self.height()) // 2,
-            )
-        # Minimum içerik boyutu (scroll bar çıkabilsin diye küçük tutuldu)
-        self.setMinimumSize(820, 560)
+        # Pencere boyutu küçük tutulur, sonra maximize ile ekranı kaplar.
+        # Kullanıcı pencereyi küçültürse en az 700x520 (kartlar tek sütun
+        # düzende, scroll otomatik).
+        self.resize(900, 700)
+        self.setMinimumSize(700, 520)
+        # Ekran ne kadar küçük olursa olsun pencere maximized — her kart
+        # rahat görünür, scroll'la kaydırılır.
+        self.showMaximized()
 
         # Önce kaydedilmiş ayarları yükle (UI dolsun)
         QTimer.singleShot(50, self._load_all_settings)
@@ -1335,31 +1328,22 @@ class MainWindow(QMainWindow):
         return frame
 
     def _build_strategies_row(self) -> QFrame:
+        """6 kart TEK SÜTUN — kucuk laptop ekranlarda yan yana 2 sütun
+        sigmiyor, kartlar saga taşıyordu. Üst üste düzen scroll ile her
+        ekrana sıgar."""
         frame = QFrame()
         v = QVBoxLayout(frame)
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(10)
-
-        # Üst satır: 8T LONG | 8T SHORT
-        top = QHBoxLayout()
-        top.setSpacing(14)
-        top.addWidget(self.card_8t_long)
-        top.addWidget(self.card_8t_short)
-        v.addLayout(top)
-
-        # Orta satır: MULTI100 | Micro-Sweep
-        mid = QHBoxLayout()
-        mid.setSpacing(14)
-        mid.addWidget(self.card_multi)
-        mid.addWidget(self.card_micro)
-        v.addLayout(mid)
-
-        # Alt satır: GOLDS | GENIS
-        bot = QHBoxLayout()
-        bot.setSpacing(14)
-        bot.addWidget(self.card_goldsell)
-        bot.addWidget(self.card_genis)
-        v.addLayout(bot)
+        for card in (
+            self.card_8t_long,
+            self.card_8t_short,
+            self.card_multi,
+            self.card_micro,
+            self.card_goldsell,
+            self.card_genis,
+        ):
+            v.addWidget(card)
         return frame
 
     def _build_kasa_panel(self) -> QFrame:
