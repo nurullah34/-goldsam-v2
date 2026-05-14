@@ -126,11 +126,11 @@ async def lifespan(app: FastAPI):
     print(f"GoldSam Server başlatıldı")
     print(f"Admin token: {ADMIN_TOKEN}")
     engine.start()
-    # Watchdog thread'i baslat (daemon - process exit'inde otomatik kapanir)
-    import threading
-    wd = threading.Thread(target=_watchdog_thread, daemon=True, name="watchdog")
-    wd.start()
-    print("[WATCHDOG] Saglik kontrol thread'i aktif (60sn aralikla)")
+    # Watchdog KAPATILDI (kullanici istegi): MT5 paketi bazen broker
+    # throttling yuzunden False donduruyor, watchdog yanlis pozitif veriyor,
+    # gereksiz restart dongusu yapiyor. Asil hang durumlarini BASLAT.bat
+    # goto LOOP zaten yakaliyor — server crash olursa otomatik tekrar baslar.
+    # Watchdog kaldirilarak: hiç restart yok, sürekli stabil çalışma.
     yield
     engine.stop()
     print("GoldSam Server kapandı")
@@ -138,7 +138,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="GoldSam V2 Strategy Server",
-    version="1.1.8",
+    version="1.1.9",
     lifespan=lifespan,
 )
 
@@ -225,7 +225,7 @@ def require_admin(x_admin_token: Optional[str] = Header(None)) -> None:
 def root():
     return {
         "service": "GoldSam V2 Strategy Server",
-        "version": "1.1.8",
+        "version": "1.1.9",
         "status": "running",
     }
 
@@ -263,7 +263,7 @@ def healthz():
         db_ok = False
     return {
         "ok": db_ok and mt5_ok,
-        "version": "1.1.8",
+        "version": "1.1.9",
         "mt5_connected": mt5_ok,
         "db_ok": db_ok,
         "license_count": lic_count,
