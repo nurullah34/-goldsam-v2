@@ -1321,7 +1321,7 @@ class MainWindow(QMainWindow):
         inner_v.addWidget(info_lbl)
 
         # LONG Trailing — 8T LONG, MULTI100, MICRO-S, GENIS için
-        self._kasa_trail_long_chk = QCheckBox("Aktif")
+        self._kasa_trail_long_chk = QCheckBox("")
         self._kasa_trail_long_chk.setObjectName("DotCheck")
         self._kasa_trail_long_chk.setChecked(True)
         self._kasa_trail_long_input = _spin(1.0, 9999.0, 1.0, 1.0, decimals=2)
@@ -1340,7 +1340,7 @@ class MainWindow(QMainWindow):
         inner_v.addLayout(self._kasa_row("LONG\nTrailing", long_hbox))
 
         # SHORT Trailing — 8T SHORT, GOLDS için
-        self._kasa_trail_short_chk = QCheckBox("Aktif")
+        self._kasa_trail_short_chk = QCheckBox("")
         self._kasa_trail_short_chk.setObjectName("DotCheck")
         self._kasa_trail_short_chk.setChecked(True)
         self._kasa_trail_short_input = _spin(1.0, 9999.0, 1.0, 1.0, decimals=2)
