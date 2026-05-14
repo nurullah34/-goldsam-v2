@@ -162,14 +162,20 @@ class Engine:
             if self._has_open_position(sig_magic):
                 continue
 
-            # GUARD 2 — aynı M1 bar üzerinde bu strateji daha önce sinyal verdi mi?
+            # GUARD 2 — son sinyalden bu yana en az 10 M1 bar (10 dk) geçmiş olmalı
             current_bar_time = (
                 bars_by_tf.get("M1", [{}])[-1].get("time")
                 if bars_by_tf.get("M1") else None
             )
             strategy_id = f"{strat.display}_{sig_magic}"
-            if current_bar_time and self._last_signal_bar.get(strategy_id) == current_bar_time:
-                continue
+            if current_bar_time and strategy_id in self._last_signal_bar:
+                try:
+                    last_t = datetime.fromisoformat(self._last_signal_bar[strategy_id])
+                    cur_t = datetime.fromisoformat(current_bar_time)
+                    if (cur_t - last_t).total_seconds() < 10 * 60:
+                        continue
+                except Exception:
+                    pass
 
             # Lot/SL/Trail sunucuda BELİRLENMEZ — bot her müşteri için kendi UI'sından okur.
             # Server sadece "ne, hangi yön, hangi strateji, hangi magic" der.
