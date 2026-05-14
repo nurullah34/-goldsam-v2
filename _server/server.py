@@ -51,18 +51,23 @@ engine = Engine(log=print)
 
 
 def _watchdog_thread() -> None:
-    """Dahili saglik kontrol thread'i — her 60 sn:
-    1. mt5.terminal_info() cagir, 15sn timeout
-    2. Cevap yoksa: log + os._exit(1) -> BASLAT.bat goto LOOP yakalar
-    3. Engine son tick'ten 5 dakikadan fazla zaman gectiyse: exit
+    """Dahili saglik kontrol thread'i — AGRESIF mod (max ~25 sn downtime):
+    1. Her 10 sn MT5 check (5 sn timeout)
+    2. 2 ardisik fail -> os._exit(1) -> BASLAT.bat goto LOOP restart
+    3. Engine 60sn'den uzun cevapsizsa: exit
 
-    Bu sayede uvicorn deadlock / MT5 hang durumlarinda otomatik restart.
-    Kullaniciya RDP gerek kalmaz.
+    Eski ayar 60sn cycle + 3 fail (max 3 dk) cok uzundu, kullanici 10sn
+    istedi. Yeni ayar: ~25 sn worst case downtime.
     """
     import threading, time, os as _os
     from datetime import datetime as _dt
 
-    def _check_mt5_timeout(result, timeout=15):
+    CHECK_INTERVAL = 10   # sn
+    MT5_TIMEOUT = 5       # sn (her check icin)
+    FAIL_THRESHOLD = 2    # 2 ardisik fail -> restart
+    ENGINE_STALE_SEC = 60 # 1 dk tick yoksa restart
+
+    def _check_mt5_timeout(timeout=MT5_TIMEOUT):
         """MT5 cagrisini ayri thread'de calistir, timeout uygula."""
         finished = threading.Event()
         ok_box = [False]
@@ -85,16 +90,19 @@ def _watchdog_thread() -> None:
     consecutive_fail = 0
     while True:
         try:
-            time.sleep(60)
+            time.sleep(CHECK_INTERVAL)
+
             # 1) MT5 check
-            mt5_ok = _check_mt5_timeout(None, timeout=15)
+            mt5_ok = _check_mt5_timeout()
             if not mt5_ok:
                 consecutive_fail += 1
-                print(f"[WATCHDOG] MT5 cevap vermiyor ({consecutive_fail}/3)")
-                if consecutive_fail >= 3:
-                    print("[WATCHDOG] 3+ MT5 hata - server RESTART")
+                print(f"[WATCHDOG] MT5 cevap vermiyor ({consecutive_fail}/{FAIL_THRESHOLD})")
+                if consecutive_fail >= FAIL_THRESHOLD:
+                    print(f"[WATCHDOG] {FAIL_THRESHOLD}+ MT5 hata - server RESTART")
                     _os._exit(1)
             else:
+                if consecutive_fail > 0:
+                    print(f"[WATCHDOG] MT5 normalize oldu")
                 consecutive_fail = 0
 
             # 2) Engine staleness check
@@ -103,7 +111,7 @@ def _watchdog_thread() -> None:
                 try:
                     last_dt = _dt.fromisoformat(last) if isinstance(last, str) else last
                     age_sec = (_dt.utcnow() - last_dt).total_seconds()
-                    if age_sec > 300:  # 5 dk
+                    if age_sec > ENGINE_STALE_SEC:
                         print(f"[WATCHDOG] Engine tick {age_sec:.0f}sn cevapsiz - RESTART")
                         _os._exit(2)
                 except Exception:
@@ -130,7 +138,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="GoldSam V2 Strategy Server",
-    version="1.1.6",
+    version="1.1.7",
     lifespan=lifespan,
 )
 
@@ -217,7 +225,7 @@ def require_admin(x_admin_token: Optional[str] = Header(None)) -> None:
 def root():
     return {
         "service": "GoldSam V2 Strategy Server",
-        "version": "1.1.6",
+        "version": "1.1.7",
         "status": "running",
     }
 
@@ -255,7 +263,7 @@ def healthz():
         db_ok = False
     return {
         "ok": db_ok and mt5_ok,
-        "version": "1.1.6",
+        "version": "1.1.7",
         "mt5_connected": mt5_ok,
         "db_ok": db_ok,
         "license_count": lic_count,
