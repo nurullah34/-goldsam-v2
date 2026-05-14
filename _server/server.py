@@ -105,7 +105,21 @@ class LicenseAddIn(BaseModel):
     mt5_login: int
     mt5_server: Optional[str] = ""
     customer_name: Optional[str] = ""
-    expires_days: Optional[int] = 365
+    expires_days: Optional[int] = 30
+
+
+class LicenseLoginIn(BaseModel):
+    license_key: str
+    mt5_login: int
+    device_id: str
+    device_name: Optional[str] = ""
+
+
+class LicenseUpdateIn(BaseModel):
+    customer_name: Optional[str] = None
+    expires_days: Optional[int] = None      # uzatma (mevcuda eklenir)
+    is_active: Optional[bool] = None
+    reset_device: Optional[bool] = False    # cihaz bind sifirlama
 
 
 # ───── Auth helpers ──────────────────────────────────────────
@@ -160,6 +174,32 @@ def public_signals_recent(limit: int = Query(50, ge=1, le=200)):
 
 # ───── Agent (Bot) endpoints ─────────────────────────────────
 
+@app.post("/v1/login")
+def license_login(payload: LicenseLoginIn):
+    """Bot login — license_key + MT5 hesap + cihaz ID → agent_token döner.
+    İlk girişte cihaza bind edilir, sonraki girişlerde aynı cihaz olmalı.
+    """
+    ok, msg, lic = db.license_login(
+        license_key=payload.license_key.strip().upper(),
+        mt5_login=payload.mt5_login,
+        device_id=payload.device_id,
+        device_name=payload.device_name or "",
+    )
+    if not ok or lic is None:
+        raise HTTPException(status_code=403, detail=msg)
+    days_left = db.days_remaining(lic)
+    return {
+        "ok": True,
+        "agent_token":  lic["agent_token"],
+        "customer_name": lic.get("customer_name"),
+        "mt5_login":    lic["mt5_login"],
+        "expires_at":   lic.get("expires_at"),
+        "days_remaining": days_left,
+        "warn_expiry":  (days_left is not None and days_left <= 7),
+        "msg": msg,
+    }
+
+
 @app.post("/v1/heartbeat")
 def heartbeat(payload: HeartbeatIn, x_agent_token: str = Header(...)):
     lic = require_agent(x_agent_token)
@@ -167,7 +207,13 @@ def heartbeat(payload: HeartbeatIn, x_agent_token: str = Header(...)):
     if not ok:
         raise HTTPException(status_code=403, detail=msg)
     db.heartbeat_license(x_agent_token)
-    return {"ok": True, "ts": datetime.utcnow().isoformat(timespec="seconds")}
+    days_left = db.days_remaining(lic)
+    return {
+        "ok":           True,
+        "ts":           datetime.utcnow().isoformat(timespec="seconds"),
+        "days_remaining": days_left,
+        "warn_expiry":  (days_left is not None and days_left <= 7),
+    }
 
 
 @app.get("/v1/signals/pending")
@@ -208,28 +254,64 @@ def license_check(mt5_login: int = Query(...), x_agent_token: str = Header(...))
 @app.post("/admin/license/add")
 def admin_license_add(payload: LicenseAddIn, x_admin_token: str = Header(...)):
     require_admin(x_admin_token)
-    new_token = "gs_" + secrets.token_urlsafe(24)
-    lic_id = db.add_license(
-        agent_token=new_token,
+    lic = db.add_license(
         mt5_login=payload.mt5_login,
         mt5_server=payload.mt5_server or "",
         customer_name=payload.customer_name or "",
         expires_days=payload.expires_days,
     )
-    return {
-        "ok": True,
-        "license_id": lic_id,
-        "agent_token": new_token,
-        "mt5_login": payload.mt5_login,
-        "customer_name": payload.customer_name,
-        "expires_days": payload.expires_days,
-    }
+    return {"ok": True, **lic}
 
 
 @app.get("/admin/licenses")
 def admin_licenses(x_admin_token: str = Header(...)):
     require_admin(x_admin_token)
-    return {"licenses": db.list_licenses()}
+    licenses = db.list_licenses()
+    for lic in licenses:
+        lic["days_remaining"] = db.days_remaining(lic)
+    return {"licenses": licenses}
+
+
+@app.delete("/admin/license/{license_id}")
+def admin_license_delete(license_id: int, x_admin_token: str = Header(...)):
+    require_admin(x_admin_token)
+    ok = db.delete_license(license_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Lisans bulunamadı")
+    return {"ok": True}
+
+
+@app.patch("/admin/license/{license_id}")
+def admin_license_update(license_id: int, payload: LicenseUpdateIn,
+                          x_admin_token: str = Header(...)):
+    require_admin(x_admin_token)
+    fields = {}
+    if payload.customer_name is not None:
+        fields["customer_name"] = payload.customer_name
+    if payload.is_active is not None:
+        fields["is_active"] = 1 if payload.is_active else 0
+    if payload.reset_device:
+        fields["device_id"] = None
+        fields["device_name"] = None
+        fields["bound_at"] = None
+    if payload.expires_days is not None and payload.expires_days > 0:
+        # Mevcut süreye ekle (yoksa bugünden itibaren)
+        existing = db.list_licenses()
+        cur = next((l for l in existing if l["id"] == license_id), None)
+        if cur:
+            from datetime import datetime as _dt, timedelta as _td
+            try:
+                base = (_dt.fromisoformat(cur["expires_at"])
+                        if cur.get("expires_at") else _dt.utcnow())
+                if base < _dt.utcnow():
+                    base = _dt.utcnow()
+            except Exception:
+                base = _dt.utcnow()
+            fields["expires_at"] = (base + _td(days=payload.expires_days)).isoformat(timespec="seconds")
+    ok = db.update_license(license_id, **fields)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Lisans bulunamadı veya değişiklik yok")
+    return {"ok": True}
 
 
 @app.get("/admin/trade_reports")
