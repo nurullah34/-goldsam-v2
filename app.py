@@ -765,6 +765,29 @@ class StrategyCard(QFrame):
                     break
 
 
+def _force_dark_title_bar(widget) -> None:
+    """Windows başlık çubuğunu (title bar) koyu yap — Qt'nin doğrudan
+    kontrolü dışı, DWM API ile zorla. Light Windows temasında bot başlığı
+    artık beyaz değil koyu olur.
+
+    Win10 1809+ ve Win11'de çalışır. Eski sürümlerde no-op.
+    """
+    try:
+        import ctypes
+        # DWMWA_USE_IMMERSIVE_DARK_MODE = 20 (Win10 1903+) ya da 19 (eski)
+        hwnd = int(widget.winId())
+        value = ctypes.c_int(1)
+        size = ctypes.sizeof(value)
+        for attr in (20, 19):  # önce yeni, yoksa eski
+            res = ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                hwnd, attr, ctypes.byref(value), size
+            )
+            if res == 0:  # S_OK
+                return
+    except Exception:
+        pass
+
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -852,6 +875,11 @@ class MainWindow(QMainWindow):
         # Ekran ne kadar küçük olursa olsun pencere maximized — her kart
         # rahat görünür, scroll'la kaydırılır.
         self.showMaximized()
+
+    def showEvent(self, event) -> None:
+        """Pencere ilk açıldığında title bar'ı koyu zorla (Win10/11)."""
+        super().showEvent(event)
+        _force_dark_title_bar(self)
 
         # Önce kaydedilmiş ayarları yükle (UI dolsun)
         QTimer.singleShot(50, self._load_all_settings)
