@@ -26,12 +26,27 @@ for pkg in ("certifi", "cryptography", "MetaTrader5"):
     except Exception:
         pass
 
+# MetaTrader5 — collect_all'in atladigi C extension binary'lerini manuel ekle
+# _core.cp312-win_amd64.pyd MT5 paketinde olmazsa "MetaTrader5 yuklu degil" hatasi.
+try:
+    import MetaTrader5 as _mt5_mod
+    _mt5_dir = Path(_mt5_mod.__file__).resolve().parent
+    for _pyd in _mt5_dir.glob("*.pyd"):
+        binaries.append((str(_pyd), "MetaTrader5"))
+    for _dll in _mt5_dir.glob("*.dll"):
+        binaries.append((str(_dll), "MetaTrader5"))
+except Exception:
+    pass
+
 # PySide6 — sadece kullandigimiz modulleri elle ekle
 hiddenimports += [
     "PySide6.QtCore",
     "PySide6.QtGui",
     "PySide6.QtWidgets",
     "shiboken6",
+    # MT5 C extension'i acikca da ekle (yedek)
+    "MetaTrader5",
+    "MetaTrader5._core",
 ]
 
 
