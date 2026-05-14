@@ -155,22 +155,23 @@ class Engine:
 
             # Magic SET olabilir (MicroSweep) — Signal'in kendi magic'i tek int
             sig_magic = int(sig.magic) if isinstance(sig.magic, int) else 0
+            # Lot/SL/Trail sunucuda BELİRLENMEZ — bot her müşteri için kendi UI'sından okur.
+            # Server sadece "ne, hangi yön, hangi strateji, hangi magic" der.
             signal_id = db.insert_signal(
                 strategy=strat.display,
                 side=sig.side,
                 symbol=sig.symbol,
-                lot=float(sig.lot),
+                lot=0.0,         # placeholder — bot kullanıcı ayarını kullanır
                 magic=sig_magic,
-                sl_usd=float(sig.sl_usd),
+                sl_usd=0.0,      # placeholder — bot kullanıcı ayarını kullanır
                 comment=str(sig.comment),
-                trail_activate_usd=float(sig.trail_activate_usd),
+                trail_activate_usd=0.0,  # placeholder — bot Kasa panelinden alır
             )
             self._signal_count += 1
             side_txt = "LONG" if sig.side == "buy" else "SHORT"
             self.log(
                 f"🎯 SİNYAL #{signal_id} → {strat.display} {side_txt} "
-                f"@ {sig.symbol} | lot={sig.lot} SL=${sig.sl_usd} magic={sig_magic} "
-                f"({sig.comment})"
+                f"@ {sig.symbol} | magic={sig_magic} ({sig.comment})"
             )
 
         self._last_tick = datetime.utcnow()
