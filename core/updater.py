@@ -152,7 +152,7 @@ rmdir /S /Q "{staged_dir}" 2>NUL
 :: 5) Yeni exe'yi baslat
 start "" "{install_dir}\\{exe_name}"
 
-:: 6) VBS wrapper'i sil (varsa)
+:: 6) Eski VBS kalintilarini temizle (v2.1.2'den)
 del /q "{bat_path.with_suffix('.vbs')}" 2>NUL
 
 :: 7) Bu bat'i sil
@@ -167,29 +167,29 @@ del /q "{bat_path.with_suffix('.vbs')}" 2>NUL
 
 
 def _spawn_bat(bat_path: Path) -> bool:
-    """Bat'i KESIN gorunmez calistir (Windows Terminal default kullanildiginda
-    CREATE_NO_WINDOW yeterli olmuyor — kullanici bos cmd penceresi goruyor).
+    """Bat'i KESIN gorunmez calistir.
 
-    Cozum: VBS wrapper yaz, WScript.Shell.Run window=0 ile cmd'yi gizli
-    baslatir, wscript'i Popen ile detached fork ederiz. Bat invisible calisir,
-    swap tamamlandiginda her sey kendiliginden temizlenir.
+    Yontem: PowerShell -WindowStyle Hidden -Command "Start-Process ... -WindowStyle Hidden"
+    Hem PS host'u gizli, hem ic'erdeki bat penceresi gizli. Windows Terminal
+    default olsa bile etkin (VBS yontemi escape problemi yapiyordu).
     """
-    try:
-        # 1) VBS wrapper olustur — bat'i window=0 (hidden) baslatir
-        vbs_path = bat_path.with_suffix(".vbs")
-        # Path'leri VBS string'inde escape — backslash'ler ikiye katlanmali
-        bat_for_vbs = str(bat_path).replace('"', '""')
-        vbs_content = (
-            'Set s = CreateObject("WScript.Shell")\r\n'
-            f's.Run "cmd /c """{bat_for_vbs}"""", 0, False\r\n'
-        )
-        vbs_path.write_text(vbs_content, encoding="ascii")
+    DETACHED_PROCESS = 0x00000008
+    CREATE_NO_WINDOW = 0x08000000
 
-        # 2) wscript.exe ile VBS'i detached fork et
-        DETACHED_PROCESS = 0x00000008
-        CREATE_NO_WINDOW = 0x08000000
+    # PowerShell ile gizli baslat
+    try:
+        ps_cmd = (
+            f"Start-Process -FilePath '{bat_path}' "
+            f"-WindowStyle Hidden -WorkingDirectory '{bat_path.parent}'"
+        )
         subprocess.Popen(
-            ["wscript.exe", str(vbs_path)],
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-ExecutionPolicy", "Bypass",
+                "-WindowStyle", "Hidden",
+                "-Command", ps_cmd,
+            ],
             cwd=str(bat_path.parent),
             creationflags=DETACHED_PROCESS | CREATE_NO_WINDOW,
             close_fds=True,
@@ -199,22 +199,22 @@ def _spawn_bat(bat_path: Path) -> bool:
         )
         return True
     except Exception:
-        # Fallback: dogrudan bat (window gozukebilir ama yine de calisir)
-        try:
-            DETACHED_PROCESS = 0x00000008
-            CREATE_NO_WINDOW = 0x08000000
-            subprocess.Popen(
-                ["cmd", "/c", str(bat_path)],
-                cwd=str(bat_path.parent),
-                creationflags=DETACHED_PROCESS | CREATE_NO_WINDOW,
-                close_fds=True,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            return True
-        except Exception:
-            return False
+        pass
+
+    # Fallback: dogrudan cmd /c (window gozukebilir ama yine de calisir)
+    try:
+        subprocess.Popen(
+            ["cmd", "/c", str(bat_path)],
+            cwd=str(bat_path.parent),
+            creationflags=DETACHED_PROCESS | CREATE_NO_WINDOW,
+            close_fds=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return True
+    except Exception:
+        return False
 
 
 def download_and_apply(
