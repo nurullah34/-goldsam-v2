@@ -60,7 +60,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="GoldSam V2 Strategy Server",
-    version="1.0.0",
+    version="1.1.0",
     lifespan=lifespan,
 )
 
@@ -105,6 +105,7 @@ class LicenseAddIn(BaseModel):
     mt5_login: int
     mt5_server: Optional[str] = ""
     customer_name: Optional[str] = ""
+    customer_email: Optional[str] = ""
     expires_days: Optional[int] = 30
 
 
@@ -117,6 +118,7 @@ class LicenseLoginIn(BaseModel):
 
 class LicenseUpdateIn(BaseModel):
     customer_name: Optional[str] = None
+    customer_email: Optional[str] = None
     expires_days: Optional[int] = None      # uzatma (mevcuda eklenir)
     is_active: Optional[bool] = None
     reset_device: Optional[bool] = False    # cihaz bind sifirlama
@@ -144,7 +146,7 @@ def require_admin(x_admin_token: Optional[str] = Header(None)) -> None:
 def root():
     return {
         "service": "GoldSam V2 Strategy Server",
-        "version": "1.0.0",
+        "version": "1.1.0",
         "status": "running",
     }
 
@@ -258,6 +260,7 @@ def admin_license_add(payload: LicenseAddIn, x_admin_token: str = Header(...)):
         mt5_login=payload.mt5_login,
         mt5_server=payload.mt5_server or "",
         customer_name=payload.customer_name or "",
+        customer_email=payload.customer_email or "",
         expires_days=payload.expires_days,
     )
     return {"ok": True, **lic}
@@ -288,6 +291,8 @@ def admin_license_update(license_id: int, payload: LicenseUpdateIn,
     fields = {}
     if payload.customer_name is not None:
         fields["customer_name"] = payload.customer_name
+    if payload.customer_email is not None:
+        fields["customer_email"] = payload.customer_email
     if payload.is_active is not None:
         fields["is_active"] = 1 if payload.is_active else 0
     if payload.reset_device:

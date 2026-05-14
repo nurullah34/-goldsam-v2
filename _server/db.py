@@ -15,13 +15,14 @@ _LOCK = threading.Lock()
 
 
 def _migrate_v1_to_v2(c) -> None:
-    """Eski licenses tablosuna eksik kolonlari ekle (license_key + device_*)."""
+    """Eski licenses tablosuna eksik kolonlari ekle."""
     cols = [r[1] for r in c.execute("PRAGMA table_info(licenses)").fetchall()]
     add = {
-        "license_key": "TEXT",
-        "device_id":   "TEXT",
-        "device_name": "TEXT",
-        "bound_at":    "TEXT",
+        "license_key":     "TEXT",
+        "device_id":       "TEXT",
+        "device_name":     "TEXT",
+        "bound_at":        "TEXT",
+        "customer_email":  "TEXT",
     }
     for name, typ in add.items():
         if name not in cols:
@@ -192,7 +193,8 @@ def _gen_license_key() -> str:
 
 
 def add_license(mt5_login: int, mt5_server: str = "",
-                customer_name: str = "", expires_days: Optional[int] = None,
+                customer_name: str = "", customer_email: str = "",
+                expires_days: Optional[int] = None,
                 license_key: Optional[str] = None,
                 agent_token: Optional[str] = None) -> dict:
     """Yeni lisans olustur. license_key + agent_token otomatik uretilir."""
@@ -219,19 +221,21 @@ def add_license(mt5_login: int, mt5_server: str = "",
     with _conn() as c:
         cur = c.execute(
             "INSERT INTO licenses (license_key, agent_token, mt5_login, mt5_server, "
-            "customer_name, expires_at, is_active, created_at) "
-            "VALUES (?,?,?,?,?,?,1,?)",
-            (license_key, agent_token, mt5_login, mt5_server, customer_name, exp, now),
+            "customer_name, customer_email, expires_at, is_active, created_at) "
+            "VALUES (?,?,?,?,?,?,?,1,?)",
+            (license_key, agent_token, mt5_login, mt5_server,
+             customer_name, customer_email, exp, now),
         )
         lic_id = int(cur.lastrowid)
     return {
-        "id":           lic_id,
-        "license_key":  license_key,
-        "agent_token":  agent_token,
-        "mt5_login":    mt5_login,
-        "mt5_server":   mt5_server,
+        "id":            lic_id,
+        "license_key":   license_key,
+        "agent_token":   agent_token,
+        "mt5_login":     mt5_login,
+        "mt5_server":    mt5_server,
         "customer_name": customer_name,
-        "expires_at":   exp,
+        "customer_email": customer_email,
+        "expires_at":    exp,
     }
 
 
@@ -364,7 +368,7 @@ def delete_license(license_id: int) -> bool:
 
 def update_license(license_id: int, **fields) -> bool:
     """Lisans gunceller (extend, deactivate, reset_device, vs.)."""
-    allowed = {"customer_name", "expires_at", "is_active",
+    allowed = {"customer_name", "customer_email", "expires_at", "is_active",
                "device_id", "device_name", "bound_at"}
     sets = []
     vals = []
