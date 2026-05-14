@@ -8,24 +8,33 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame,
     QPushButton, QCheckBox, QDoubleSpinBox, QRadioButton, QButtonGroup,
     QPlainTextEdit, QMessageBox, QDialog, QTableWidget, QTableWidgetItem,
-    QComboBox, QHeaderView
+    QComboBox, QHeaderView, QLineEdit
 )
 
-from core import settings as user_settings
+from core import license_store, settings as user_settings
 from core.agent_worker import AgentWorker
 from core.account_lock import bind as lock_bind, get_locked_info, is_bound, verify as lock_verify
-from core.device_id import get_display_name
+from core.device_id import get_display_name, get_device_fingerprint
+from core.kriptoly_client import KriptolyClient
+from core.magic_map import (
+    CARD_8T_LONG, CARD_8T_SHORT, CARD_GENIS, CARD_GOLDS, CARD_MICRO_S,
+    CARD_MULTI100,
+)
 from core.mt5_connector import MT5Connector
 from core.position_monitor import PositionMonitor
 from core.strategy_engine import StrategyEngine
 from core.trade_executor import TradeExecutor
 from core.updater import check_and_update
-from strategies.dengeli_8t import Dengeli8T
-from strategies.multi100.strategy import Multi100Strategy
-from strategies.micro_sweep.strategy import MicroSweepStrategy
-from strategies.goldsell.strategy import GoldSellStrategy
-from strategies.genis.strategy import GenisStrategy
 from version import VERSION, APP_NAME
+
+
+# Magic numara aralıkları (kart ↔ magic eşlemesi core/magic_map.py'de)
+MAGIC_8T_LONG  = 20270001
+MAGIC_8T_SHORT = 20270002
+MULTI100_MAGICS = {20270011, 20270012, 20270013, 20270014}
+MICRO_S_MAGICS  = {20270100 + i for i in range(1, 28)}  # 20270101..20270127
+MAGIC_GOLDS    = 20270200
+MAGIC_GENIS    = 20270300
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -767,9 +776,14 @@ class MainWindow(QMainWindow):
         self.executor = TradeExecutor(log=self._log_msg)
         self.monitor = PositionMonitor(log=self._log_msg, symbol="GOLD#")
         self.engine = StrategyEngine(log=self._log_msg)
+        self.client = KriptolyClient(log=self._log_msg)
+        self.engine.set_client(self.client)
         self.engine.on_signal = lambda sig, strat: self.executor.execute(sig)
         self.worker: Optional[AgentWorker] = None
         self._account_locked: bool = False  # Lock doğrulamadan bot başlamaz
+        self._license_ok: bool = False      # Lisans doğrulanmadan bot başlamaz
+        # Heartbeat — 60 sn'de bir VPS'e durum bildir
+        self._hb_timer: Optional[QTimer] = None
 
         # Strateji kartları
         self.card_8t_long = StrategyCard("8T LONG")
@@ -856,10 +870,131 @@ class MainWindow(QMainWindow):
                 f"| {ai.get('company')} | Bakiye ${ai.get('balance'):.2f}"
             )
             self._populate_symbols()
+            # 1) Lisans kontrolü (lokal kayıt → server doğrulama → dialog)
+            self._verify_license(ai)
+            # 2) MT5 hesap kilidi (lokal AES)
             self._verify_account_lock(ai)
+            # 3) Heartbeat timer (sadece lisans varsa)
+            self._start_heartbeat_timer(ai)
         else:
             self._set_dot(self._dot_mt5, DOT_ERR)
             self._log_msg(f"MT5 BAĞLANTI HATASI: {self.mt5.last_error}")
+
+    # ─── Lisans doğrulama (server) ────────────────────────────
+    def _verify_license(self, account_info: dict) -> None:
+        """Lisansı server'da doğrula. Geçersizse LicenseDialog aç.
+
+        Akış:
+          1. license_store.load() → varsa client'a set
+          2. heartbeat ile server'a doğrula
+          3. başarısızsa lokal token'ı sil + dialog aç
+          4. dialog kabulde token kaydedilmiş olur → client.set_credentials
+        """
+        from ui.license_dialog import LicenseDialog
+
+        mt5_login = int(account_info.get("login", 0))
+        mt5_server = str(account_info.get("server", ""))
+        balance = float(account_info.get("balance", 0.0))
+        equity = float(account_info.get("equity", 0.0))
+
+        # Lokal token varsa yükle
+        saved = license_store.load()
+        if saved:
+            # Aynı MT5 hesabı mı? (lisans MT5 hesabına bağlı)
+            if int(saved.get("mt5_login", 0)) != mt5_login:
+                self._log_msg(
+                    f"⚠ Lisans #{saved.get('mt5_login')} hesabına bağlı, "
+                    f"şu an #{mt5_login} ile bağlısın. Yeni lisans isteniyor..."
+                )
+                license_store.clear()
+            else:
+                self.client.set_credentials(saved["agent_token"], mt5_login)
+                # Server doğrulaması
+                ok, body = self.client.heartbeat(
+                    mt5_server=mt5_server, open_positions=0,
+                    balance=balance, equity=equity,
+                )
+                if ok:
+                    self._license_ok = True
+                    days = body.get("days_remaining")
+                    name = saved.get("customer_name") or "—"
+                    self._log_msg(
+                        f"🔐 Lisans doğrulandı | Müşteri: {name} | "
+                        f"Kalan: {days if days is not None else '∞'} gün"
+                    )
+                    if body.get("warn_expiry"):
+                        self._log_msg(
+                            f"⚠ DİKKAT: Lisans süresinin dolmasına {days} gün kaldı. "
+                            "Yenileme için yöneticinizle iletişime geçin."
+                        )
+                    license_store.update_meta(days_remaining=days)
+                    return
+                # Server reddettiyse → kayıtlı tokenı sil, dialog'a düş
+                self._log_msg(
+                    "🚫 Lisans server tarafından reddedildi — yeniden giriş gerekiyor."
+                )
+                license_store.clear()
+
+        # Dialog aç
+        dlg = LicenseDialog(self.client, mt5_login_default=mt5_login, parent=self)
+        if dlg.exec() != QDialog.Accepted:
+            self._license_ok = False
+            self._log_msg("🚫 Lisans girilmedi — bot başlatılamaz.")
+            QMessageBox.critical(
+                self, "Lisans Gerekli",
+                "Botu kullanmak için geçerli bir lisans kodu gerekli.\n"
+                "Lisans için yöneticinizle iletişime geçin.",
+            )
+            return
+
+        self._license_ok = True
+        days = dlg.days_remaining
+        name = dlg.customer_name or "—"
+        self._log_msg(
+            f"🔐 Lisans doğrulandı | Müşteri: {name} | "
+            f"Kalan: {days if days is not None else '∞'} gün"
+        )
+
+    # ─── Heartbeat timer ──────────────────────────────────────
+    def _start_heartbeat_timer(self, account_info: dict) -> None:
+        if not self._license_ok or not self.client.has_credentials():
+            return
+        if self._hb_timer is not None:
+            return
+        self._hb_timer = QTimer(self)
+        self._hb_timer.setInterval(60_000)  # 60 sn
+        self._hb_timer.timeout.connect(self._send_heartbeat)
+        self._hb_timer.start()
+
+    def _send_heartbeat(self) -> None:
+        if not self.client.has_credentials():
+            return
+        ai = (self.mt5.account_info or {}) if self.mt5.connected else {}
+        try:
+            import MetaTrader5 as mt5  # type: ignore
+            positions = mt5.positions_get() or []
+            open_count = len(positions)
+        except Exception:
+            open_count = 0
+        ok, body = self.client.heartbeat(
+            mt5_server=str(ai.get("server", "")),
+            open_positions=open_count,
+            balance=float(ai.get("balance", 0.0)),
+            equity=float(ai.get("equity", 0.0)),
+        )
+        if ok:
+            days = body.get("days_remaining")
+            if days is not None:
+                license_store.update_meta(days_remaining=days)
+            if body.get("warn_expiry") and days is not None and days <= 7:
+                self._log_msg(
+                    f"⚠ Lisans uyarısı: {days} gün kaldı"
+                )
+        else:
+            # Server reddederse → lisans iptal/expired olmuş olabilir
+            detail = body.get("detail") or body.get("error") or ""
+            if detail:
+                self._log_msg(f"⚠ Heartbeat reddi: {detail}")
 
     def _verify_account_lock(self, account_info: dict) -> None:
         """İlk açılışsa kilitle, değilse doğrula."""
@@ -929,6 +1064,10 @@ class MainWindow(QMainWindow):
             self._log_msg("🚫 Hesap kilidi doğrulanmadı — bot başlatılamaz.")
             return
 
+        if not self._license_ok or not self.client.has_credentials():
+            self._log_msg("🚫 Lisans doğrulanmadı — bot başlatılamaz.")
+            return
+
         if not self._detected_symbol:
             self._log_msg("🚫 Sembol tespit edilemedi — bot başlatılamaz.")
             return
@@ -955,9 +1094,15 @@ class MainWindow(QMainWindow):
         if weekend:
             self._log_msg("⚙️ Hafta sonu koruması: AÇIK (Cuma 17:00-23:59 yeni emir yok)")
 
-        for card, direction, label in (
-            (self.card_8t_long, "long", "8T LONG"),
-            (self.card_8t_short, "short", "8T SHORT"),
+        # Kartlardan ayarları magic numaralarıyla register et — sinyal VPS'ten
+        # gelince, magic'e bakıp ilgili kartın lot/SL/trail değerini kullanırız.
+        for card, card_id, magics, trail_val, label in (
+            (self.card_8t_long,   CARD_8T_LONG,  MAGIC_8T_LONG,  trail_long,  "8T LONG"),
+            (self.card_8t_short,  CARD_8T_SHORT, MAGIC_8T_SHORT, trail_short, "8T SHORT"),
+            (self.card_multi,     CARD_MULTI100, MULTI100_MAGICS, trail_long,  "MULTI100"),
+            (self.card_micro,     CARD_MICRO_S,  MICRO_S_MAGICS,  trail_long,  "MICRO-S"),
+            (self.card_goldsell,  CARD_GOLDS,    MAGIC_GOLDS,    trail_short, "GOLDS"),
+            (self.card_genis,     CARD_GENIS,    MAGIC_GENIS,    trail_long,  "GENIS"),
         ):
             s = card.settings()
             if not s["enabled"]:
@@ -965,99 +1110,16 @@ class MainWindow(QMainWindow):
             if s["lot"] <= 0:
                 self._log_msg(f"{label}: lot 0 — strateji başlatılamadı.")
                 continue
-            strat = Dengeli8T(direction=direction, symbol=symbol)
-            strat.apply_settings(
-                enabled=True,
+            self.engine.register_card(
+                card_id=card_id,
+                label=label,
+                magics=magics,
                 lot=s["lot"],
                 sl_usd=s["sl_usd"],
-                trail_activate_usd=trail_long if direction == "long" else trail_short,
-                avg_threshold_usd=s["avg_threshold_usd"],
-                avg_lot=s["avg_lot"],
+                trail_activate_usd=trail_val,
             )
-            self.engine.register(strat)
             active_count += 1
             self._log_msg(f"{label} aktif | {symbol} | lot={s['lot']} SL=${s['sl_usd']}")
-
-        smulti = self.card_multi.settings()
-        if smulti["enabled"]:
-            if smulti["lot"] <= 0:
-                self._log_msg("MULTI100: lot 0 — strateji başlatılamadı.")
-            else:
-                for tf in Multi100Strategy.all_timeframes():
-                    strat = Multi100Strategy(timeframe=tf, symbol=symbol)
-                    strat.apply_settings(
-                        enabled=True,
-                        lot=smulti["lot"],
-                        sl_usd=smulti["sl_usd"],
-                        trail_activate_usd=trail_long,
-                        avg_threshold_usd=smulti["avg_threshold_usd"],
-                        avg_lot=smulti["avg_lot"],
-                    )
-                    self.engine.register(strat)
-                    active_count += 1
-                self._log_msg(
-                    f"MULTI100 aktif | {symbol} | lot={smulti['lot']} SL=${smulti['sl_usd']}"
-                )
-
-        smicro = self.card_micro.settings()
-        if smicro["enabled"]:
-            if smicro["lot"] <= 0:
-                self._log_msg("MICRO-S: lot 0 — strateji başlatılamadı.")
-            else:
-                strat = MicroSweepStrategy(symbol=symbol)
-                strat.apply_settings(
-                    enabled=True,
-                    lot=smicro["lot"],
-                    sl_usd=smicro["sl_usd"],
-                    trail_activate_usd=trail_long,
-                    avg_threshold_usd=smicro["avg_threshold_usd"],
-                    avg_lot=smicro["avg_lot"],
-                )
-                self.engine.register(strat)
-                active_count += 1
-                self._log_msg(
-                    f"MICRO-S aktif | {symbol} | lot={smicro['lot']} SL=${smicro['sl_usd']}"
-                )
-
-        sgs = self.card_goldsell.settings()
-        if sgs["enabled"]:
-            if sgs["lot"] <= 0:
-                self._log_msg("GOLDS: lot 0 — strateji başlatılamadı.")
-            else:
-                strat = GoldSellStrategy(symbol=symbol)
-                strat.apply_settings(
-                    enabled=True,
-                    lot=sgs["lot"],
-                    sl_usd=sgs["sl_usd"],
-                    trail_activate_usd=trail_short,
-                    avg_threshold_usd=sgs["avg_threshold_usd"],
-                    avg_lot=sgs["avg_lot"],
-                )
-                self.engine.register(strat)
-                active_count += 1
-                self._log_msg(
-                    f"GOLDS aktif | {symbol} | lot={sgs['lot']} SL=${sgs['sl_usd']}"
-                )
-
-        sgn = self.card_genis.settings()
-        if sgn["enabled"]:
-            if sgn["lot"] <= 0:
-                self._log_msg("GENIS: lot 0 — strateji başlatılamadı.")
-            else:
-                strat = GenisStrategy(symbol=symbol)
-                strat.apply_settings(
-                    enabled=True,
-                    lot=sgn["lot"],
-                    sl_usd=sgn["sl_usd"],
-                    trail_activate_usd=trail_long,
-                    avg_threshold_usd=sgn["avg_threshold_usd"],
-                    avg_lot=sgn["avg_lot"],
-                )
-                self.engine.register(strat)
-                active_count += 1
-                self._log_msg(
-                    f"GENIS aktif | {symbol} | lot={sgn['lot']} SL=${sgn['sl_usd']}"
-                )
 
         if active_count == 0:
             self._log_msg("Hiç strateji aktif değil — kartlardan en az 1 tane seç.")

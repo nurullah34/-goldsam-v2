@@ -17,7 +17,7 @@ try:
 except ImportError:
     mt5 = None
 
-from strategies.base import Signal
+from core.types import Signal
 
 
 class TradeExecutor:

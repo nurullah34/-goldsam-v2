@@ -1,6 +1,14 @@
-"""Strategy engine — aktif stratejileri sırayla tarayıp Signal toplar.
+"""Cloud strategy engine — VPS sunucusundan sinyal alıp UI kart ayarlarıyla
+işleme dönüştürür.
 
-M5'te sadece sinyali log'a düşürür; M6'da TradeExecutor'a verir.
+v1.x'te lokal strategy_engine bar verisini tarayıp lokal stratejilerin
+``check(bars)`` metoduna sorardı. v2.x sonrası lokal strateji YOK; sunucu
+zaten MT5 demo hesabıyla bar tarayıp sinyal üretiyor, biz sadece çekip
+kullanıcının kart ayarlarıyla (lot/SL/trail) emir açıyoruz.
+
+API'yi koruduk: ``engine.reset()``, ``engine.register_card(...)``,
+``engine.active_magics()``, ``engine.tick()``, ``engine.on_signal=...``
+— agent_worker hâlâ aynı arayüzü kullanır.
 """
 from __future__ import annotations
 
@@ -12,45 +20,82 @@ try:
 except ImportError:
     mt5 = None
 
-from core.bar_provider import fetch_bars
-from strategies.base import Signal, Strategy
+from core.kriptoly_client import KriptolyClient, signal_from_server
+from core.magic_map import card_for_magic, label_for_magic
+from core.types import Signal
+
+
+# Her UI kartının ayarları — magic numarasına göre lookup edilir
+class _CardSettings:
+    __slots__ = ("card_id", "label", "lot", "sl_usd", "trail_activate_usd",
+                 "magics")
+
+    def __init__(self, card_id: str, label: str, lot: float, sl_usd: float,
+                 trail_activate_usd: float, magics: set[int]) -> None:
+        self.card_id = card_id
+        self.label = label
+        self.lot = float(lot)
+        self.sl_usd = float(sl_usd)
+        self.trail_activate_usd = float(trail_activate_usd)
+        self.magics = set(int(m) for m in magics)
 
 
 class StrategyEngine:
+    """Geri uyumluluk için aynı sınıf adı; içeride cloud poll yapar."""
+
     def __init__(self, log: Callable[[str], None]) -> None:
         self.log = log
-        self._strategies: list[Strategy] = []
-        # M6'da set edilecek: signal → execute(sig)
-        self.on_signal: Optional[Callable[[Signal, Strategy], None]] = None
-        # M7: kullanıcı UI'dan seçer
-        self.symbol: str = "GOLD#"          # concurrent count için
-        self.max_concurrent: int = 999      # Sınırsız default
-        self._limit_warned: bool = False    # spam log önleme
-
-        # M9: Cuma 17:00-23:59 hafta sonu koruması
+        self._cards: dict[str, _CardSettings] = {}
+        self.on_signal: Optional[Callable[[Signal, Optional[object]], None]] = None
+        self.symbol: str = "GOLD#"
+        self.max_concurrent: int = 999
+        self._limit_warned: bool = False
+        # Hafta sonu koruması — kullanıcı kasa panelinden açar
         self.weekend_protection: bool = False
         self._weekend_warned: bool = False
+        # VPS client (app.py set eder)
+        self.client: Optional[KriptolyClient] = None
 
-    def register(self, strategy: Strategy) -> None:
-        self._strategies.append(strategy)
+    # ───── API (eski + yeni) ───────────────────────────────────
+
+    def set_client(self, client: KriptolyClient) -> None:
+        self.client = client
 
     def reset(self) -> None:
-        self._strategies.clear()
+        self._cards.clear()
+        if self.client is not None:
+            # Yeni başlangıçta son sinyalden devam et — eski sinyaller tekrar
+            # uygulanmasın. (heartbeat sonrası already-picked olmuştur.)
+            pass
+
+    def register_card(self, card_id: str, label: str, magics,
+                      lot: float, sl_usd: float,
+                      trail_activate_usd: float) -> None:
+        """Bir UI kartını magic listesi ile kaydet."""
+        if isinstance(magics, int):
+            magics_set = {magics}
+        else:
+            magics_set = set(int(m) for m in magics)
+        self._cards[card_id] = _CardSettings(
+            card_id=card_id, label=label,
+            lot=lot, sl_usd=sl_usd,
+            trail_activate_usd=trail_activate_usd,
+            magics=magics_set,
+        )
 
     def active_magics(self) -> set[int]:
-        """Tüm aktif stratejilerin magic numaralarını döndür (PositionMonitor için)."""
         magics: set[int] = set()
-        for s in self._strategies:
-            if s.enabled:
-                magics |= self._strategy_magics(s)
+        for c in self._cards.values():
+            magics |= c.magics
         return magics
 
+    # ───── Tick (poll) ─────────────────────────────────────────
+
     def tick(self) -> None:
-        """Her aktif stratejiyi tara, sinyal varsa işle."""
-        if mt5 is None:
+        """Sunucudan bekleyen sinyalleri çek, kart ayarlarıyla emir aç."""
+        if self.client is None or not self.client.has_credentials():
             return
 
-        # M9: Hafta sonu koruması — Cuma 17:00-23:59 yeni emir alma
         if self._is_weekend_blackout():
             if not self._weekend_warned:
                 self.log(
@@ -61,98 +106,100 @@ class StrategyEngine:
             return
         self._weekend_warned = False
 
-        for strat in self._strategies:
-            if not strat.enabled:
-                continue
-            if strat.lot <= 0:
-                continue
+        # Bekleyen sinyalleri çek
+        try:
+            raws = self.client.poll_signals()
+        except Exception as e:
+            self.log(f"poll_signals hatası: {e}")
+            return
 
-            # Aynı stratejiden açık pozisyon var mı? (default: tek pozisyon)
-            if self._has_open_position(strat):
-                continue
+        if not raws:
+            return
 
-            # Bar çek (her TF için ayrı)
-            bars_by_tf: dict[str, list[dict]] = {}
-            for tf in strat.timeframes:
-                count = 7300 if tf == "M1" else 250
-                bars_by_tf[tf] = fetch_bars(strat.symbols[0], tf, count)
-                if not bars_by_tf[tf]:
-                    return
+        for raw in raws:
+            magic = int(raw.get("magic", 0))
+            side = raw.get("side", "")
+            card_id = card_for_magic(magic)
 
-            try:
-                sig = strat.check(bars_by_tf)
-            except Exception as e:
-                self.log(f"[{strat.display}] HATA: {e}")
+            if card_id is None:
+                # Tanınmayan magic — server yeni strateji eklemiş olabilir
+                self.log(f"⚠ Tanınmayan magic={magic}, atlandı")
                 continue
 
-            if sig is None:
+            card = self._cards.get(card_id)
+            if card is None:
+                # Bu kart kapalı → sinyali atla, ama logla
+                self.log(
+                    f"↷ {label_for_magic(magic)} sinyali geldi "
+                    f"({side.upper()}) ama kart kapalı — atlandı"
+                )
                 continue
 
-            # M7: concurrent limit kontrolü — sinyal var ama açık pozisyon limiti dolu mu?
+            if card.lot <= 0:
+                self.log(f"↷ {card.label}: lot 0, sinyal atlandı")
+                continue
+
+            # Aynı magic ile açık pozisyon varsa atla (tek pozisyon kuralı)
+            if self._has_open_position(magic):
+                continue
+
+            # Concurrent limit
             if self.max_concurrent < 999:
                 count = self._concurrent_count()
                 if count >= self.max_concurrent:
                     if not self._limit_warned:
                         self.log(
-                            f"⛔ {strat.display}: concurrent limit dolu "
-                            f"({count}/{self.max_concurrent}) — sinyal atlandı. "
-                            f"Açık pozisyonların trailing'i devam ediyor."
+                            f"⛔ Concurrent limit dolu "
+                            f"({count}/{self.max_concurrent}) — sinyal atlandı"
                         )
                         self._limit_warned = True
                     continue
-
             self._limit_warned = False
-            self._handle_signal(sig, strat)
 
-    def _has_open_position(self, strat: Strategy) -> bool:
+            # Server lot=0, sl=0 placeholder gönderir; kart ayarını uygula
+            sig = signal_from_server(
+                raw,
+                lot_override=card.lot,
+                sl_override=card.sl_usd,
+                trail_override=card.trail_activate_usd,
+            )
+
+            side_txt = "LONG" if side == "buy" else "SHORT"
+            self.log(
+                f"🎯 SİNYAL #{raw.get('id', '?')} → {card.label} {side_txt} "
+                f"@ {sig.symbol} | lot={sig.lot} SL=${sig.sl_usd} magic={magic}"
+            )
+
+            if self.on_signal is not None:
+                try:
+                    self.on_signal(sig, None)
+                except Exception as e:
+                    self.log(f"on_signal HATA: {e}")
+
+    # ───── Helpers ─────────────────────────────────────────────
+
+    def _has_open_position(self, magic: int) -> bool:
         if mt5 is None:
             return False
-        positions = mt5.positions_get(symbol=strat.symbols[0]) or []
-        # Strateji magic'leri ile karşılaştır — 8T LONG/SHORT için aynı strat
-        # iki yöne de bakar (20270001 ve 20270002 birlikte sayılır).
-        strat_magics = self._strategy_magics(strat)
-        return any(p.magic in strat_magics for p in positions)
+        try:
+            positions = mt5.positions_get(symbol=self.symbol) or []
+            return any(int(getattr(p, "magic", 0)) == magic for p in positions)
+        except Exception:
+            return False
 
     def _concurrent_count(self) -> int:
-        """Bot'un ilgilendiği sembol için tüm açık pozisyon sayısı (manuel + bot)."""
         if mt5 is None:
             return 0
-        positions = mt5.positions_get(symbol=self.symbol) or []
-        return len(positions)
+        try:
+            positions = mt5.positions_get(symbol=self.symbol) or []
+            return len(positions)
+        except Exception:
+            return 0
 
     def _is_weekend_blackout(self) -> bool:
-        """Cuma 17:00 - 23:59 (Cuma akşamı haftalık kapanış öncesi)."""
         if not self.weekend_protection:
             return False
         now = datetime.now()
-        # weekday: Pazartesi=0, ..., Cuma=4
         if now.weekday() == 4 and 17 <= now.hour < 24:
             return True
         return False
-
-    def _strategy_magics(self, strat: Strategy) -> set[int]:
-        """Bir stratejinin kullandığı magic numaralarını döndür.
-
-        Her strateji kendi 'magic' attribute'unda tek bir numara tutar.
-        Eski 8T (LONG + SHORT birlikte) modelinde set döndürülürdü;
-        artık her yön ayrı strateji olduğu için tek elemanlı.
-        """
-        magic = getattr(strat, "magic", None)
-        if isinstance(magic, int):
-            return {magic}
-        if isinstance(magic, (set, list, tuple)):
-            return set(magic)
-        return set()
-
-    def _handle_signal(self, sig: Signal, strat: Strategy) -> None:
-        side_txt = "LONG" if sig.side == "buy" else "SHORT"
-        self.log(
-            f"🎯 SİNYAL → {strat.display} {side_txt} @ {sig.symbol} "
-            f"| lot={sig.lot}  SL=${sig.sl_usd}  magic={sig.magic}"
-        )
-
-        if self.on_signal is not None:
-            try:
-                self.on_signal(sig, strat)
-            except Exception as e:
-                self.log(f"on_signal HATA: {e}")
