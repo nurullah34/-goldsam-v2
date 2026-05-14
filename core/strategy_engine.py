@@ -188,6 +188,30 @@ class StrategyEngine:
             return False
 
     def _concurrent_count(self) -> int:
+        """Sadece BOT'un acttigi pozisyonlari sayar (magic filter).
+
+        Bot magic numaralari: 20270001-2 (8T), 20270011-14 (MULTI100),
+        20270101-127 (MICRO-S), 20270200 (GOLDS), 20270300 (GENIS).
+        Manuel acilan pozisyonlar (magic=0 veya bot disindaki magic'ler)
+        SAYILMAZ — kullanici manuel islem acsa bile concurrent limit'e
+        dahil edilmez.
+        """
+        if mt5 is None:
+            return 0
+        try:
+            positions = mt5.positions_get(symbol=self.symbol) or []
+            bot_magics = self.active_magics()
+            if not bot_magics:
+                return 0  # hicbir kart aktif degil
+            return sum(
+                1 for p in positions
+                if int(getattr(p, "magic", 0)) in bot_magics
+            )
+        except Exception:
+            return 0
+
+    def _concurrent_count_RAW(self) -> int:
+        """ESKI mantik — manuel + bot toplam (referans icin)."""
         if mt5 is None:
             return 0
         try:
