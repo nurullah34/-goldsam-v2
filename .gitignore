@@ -9,7 +9,12 @@ __pycache__/
 build/
 dist/
 *.egg-info/
-*.spec
+
+# Binary artifacts (yeniden build edilir, repo'ya koyma)
+*.exe
+GOLDSAM_V2_KURULUM_*
+GOLDSAM_V2_PORTABLE_*
+GoldSam_Server_*.zip
 
 # Runtime
 .app.pid
