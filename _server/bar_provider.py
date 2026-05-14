@@ -44,12 +44,31 @@ def _init() -> bool:
 
 
 def is_connected() -> bool:
+    """Eski API — account_info() check (broker'a sorgu, network'e bagimli)."""
     if mt5 is None:
         return False
     if not _init():
         return False
     info = mt5.account_info()
     return info is not None
+
+
+def terminal_alive() -> bool:
+    """Terminal process canli mi (broker baglantisi GEREKMEZ).
+
+    Bu fonksiyon watchdog tarafindan kullanilir — broker'da gecici bir
+    network glitch oldugunda yanlis pozitif (false alarm) vermez.
+    Sadece MT5 terminal'i gerçekten DONMUS ise False doner.
+    """
+    if mt5 is None:
+        return False
+    if not _init():
+        return False
+    try:
+        ti = mt5.terminal_info()
+        return ti is not None
+    except Exception:
+        return False
 
 
 def account_info() -> Optional[dict]:

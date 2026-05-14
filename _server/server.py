@@ -51,31 +51,34 @@ engine = Engine(log=print)
 
 
 def _watchdog_thread() -> None:
-    """Dahili saglik kontrol thread'i — AGRESIF mod (max ~25 sn downtime):
-    1. Her 10 sn MT5 check (5 sn timeout)
-    2. 2 ardisik fail -> os._exit(1) -> BASLAT.bat goto LOOP restart
-    3. Engine 60sn'den uzun cevapsizsa: exit
+    """Dahili saglik kontrol — SADECE GERCEK HANG durumunda restart.
 
-    Eski ayar 60sn cycle + 3 fail (max 3 dk) cok uzundu, kullanici 10sn
-    istedi. Yeni ayar: ~25 sn worst case downtime.
+    Yanlis pozitiflerden kacinmak icin:
+    - MT5 check: terminal_info() (broker'a sormaz, sadece terminal process
+      canli mi). account_info() broker'a soruyordu, gecici network'te bos
+      doniyor — yanlis alarm.
+    - Log spam yok: 'MT5 cevap vermiyor' her cycle'da basilmaz, sadece
+      RESTART tetiklenince logla.
+    - Engine staleness: 60sn'den uzun tick yoksa restart.
+
+    Sonuc: kullanici sadece gercek hang durumlarinda log gorur, normal
+    isleyiste sessizdir.
     """
     import threading, time, os as _os
     from datetime import datetime as _dt
 
-    CHECK_INTERVAL = 10   # sn
-    MT5_TIMEOUT = 5       # sn (her check icin)
-    FAIL_THRESHOLD = 2    # 2 ardisik fail -> restart
-    ENGINE_STALE_SEC = 60 # 1 dk tick yoksa restart
+    CHECK_INTERVAL = 10
+    MT5_TIMEOUT = 5
+    FAIL_THRESHOLD = 3       # 3 ardisik fail (~30sn) - daha tolerant
+    ENGINE_STALE_SEC = 60
 
-    def _check_mt5_timeout(timeout=MT5_TIMEOUT):
-        """MT5 cagrisini ayri thread'de calistir, timeout uygula."""
+    def _check_terminal(timeout=MT5_TIMEOUT):
         finished = threading.Event()
         ok_box = [False]
 
         def _call():
             try:
-                ti = bar_provider.is_connected()
-                ok_box[0] = bool(ti)
+                ok_box[0] = bar_provider.terminal_alive()
             except Exception:
                 ok_box[0] = False
             finally:
@@ -84,7 +87,7 @@ def _watchdog_thread() -> None:
         t = threading.Thread(target=_call, daemon=True)
         t.start()
         if not finished.wait(timeout=timeout):
-            return False  # timeout
+            return False
         return ok_box[0]
 
     consecutive_fail = 0
@@ -92,32 +95,29 @@ def _watchdog_thread() -> None:
         try:
             time.sleep(CHECK_INTERVAL)
 
-            # 1) MT5 check
-            mt5_ok = _check_mt5_timeout()
-            if not mt5_ok:
+            # MT5 terminal canli mi (broker baglantisi onemli degil)
+            if not _check_terminal():
                 consecutive_fail += 1
-                print(f"[WATCHDOG] MT5 cevap vermiyor ({consecutive_fail}/{FAIL_THRESHOLD})")
                 if consecutive_fail >= FAIL_THRESHOLD:
-                    print(f"[WATCHDOG] {FAIL_THRESHOLD}+ MT5 hata - server RESTART")
+                    print(f"[WATCHDOG] MT5 terminal {FAIL_THRESHOLD} kez yanitsiz - RESTART")
                     _os._exit(1)
+                # 1 ve 2 fail'de SESSIZ — log spam yok
             else:
-                if consecutive_fail > 0:
-                    print(f"[WATCHDOG] MT5 normalize oldu")
                 consecutive_fail = 0
 
-            # 2) Engine staleness check
+            # Engine staleness (kritik — engine.tick takilirsa restart)
             last = getattr(engine, "last_tick_at", None)
             if last:
                 try:
                     last_dt = _dt.fromisoformat(last) if isinstance(last, str) else last
                     age_sec = (_dt.utcnow() - last_dt).total_seconds()
                     if age_sec > ENGINE_STALE_SEC:
-                        print(f"[WATCHDOG] Engine tick {age_sec:.0f}sn cevapsiz - RESTART")
+                        print(f"[WATCHDOG] Engine {age_sec:.0f}sn tick atmiyor - RESTART")
                         _os._exit(2)
                 except Exception:
                     pass
-        except Exception as e:
-            print(f"[WATCHDOG] hata: {e}")
+        except Exception:
+            pass  # watchdog kendi hatasini log'da spam etmesin
 
 
 @asynccontextmanager
@@ -138,7 +138,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="GoldSam V2 Strategy Server",
-    version="1.1.7",
+    version="1.1.8",
     lifespan=lifespan,
 )
 
@@ -225,7 +225,7 @@ def require_admin(x_admin_token: Optional[str] = Header(None)) -> None:
 def root():
     return {
         "service": "GoldSam V2 Strategy Server",
-        "version": "1.1.7",
+        "version": "1.1.8",
         "status": "running",
     }
 
@@ -263,7 +263,7 @@ def healthz():
         db_ok = False
     return {
         "ok": db_ok and mt5_ok,
-        "version": "1.1.7",
+        "version": "1.1.8",
         "mt5_connected": mt5_ok,
         "db_ok": db_ok,
         "license_count": lic_count,
