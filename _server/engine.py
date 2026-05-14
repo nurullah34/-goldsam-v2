@@ -17,7 +17,8 @@ from config import (
     SYMBOL, TICK_INTERVAL_SEC,
 )
 import db
-from bar_provider import fetch_bars, is_connected
+import kriptoly_bridge
+from bar_provider import fetch_bars, is_connected, account_info
 
 # Stratejiler — bot ile aynı import path'leri
 from strategies.dengeli_8t import Dengeli8T
@@ -83,17 +84,22 @@ class Engine:
         self._signal_count = 0
         self._last_tick: datetime | None = None
         self._mt5_ok = False
+        # Kriptoly heartbeat — her N tick'te bir gönder
+        self._heartbeat_every_ticks = max(1, 60 // max(1, TICK_INTERVAL_SEC))
+        self._tick_counter = 0
+        self._last_kriptoly_hb = False
 
     @property
     def status(self) -> dict:
         return {
-            "running":      self._running,
-            "mt5_ok":       self._mt5_ok,
-            "strategies":   len(self._strategies),
-            "signal_count": self._signal_count,
-            "last_tick":    self._last_tick.isoformat(timespec="seconds")
-                           if self._last_tick else None,
-            "symbol":       self.symbol,
+            "running":         self._running,
+            "mt5_ok":          self._mt5_ok,
+            "strategies":      len(self._strategies),
+            "signal_count":    self._signal_count,
+            "last_tick":       self._last_tick.isoformat(timespec="seconds")
+                              if self._last_tick else None,
+            "symbol":          self.symbol,
+            "kriptoly_online": self._last_kriptoly_hb,
         }
 
     def start(self) -> None:
@@ -168,3 +174,28 @@ class Engine:
             )
 
         self._last_tick = datetime.utcnow()
+
+        # Kriptoly heartbeat — her ~60sn'de bir
+        self._tick_counter += 1
+        if self._tick_counter >= self._heartbeat_every_ticks:
+            self._tick_counter = 0
+            self._send_kriptoly_heartbeat()
+
+    def _send_kriptoly_heartbeat(self) -> None:
+        try:
+            info = account_info()
+            if info is None:
+                return
+            ok = kriptoly_bridge.send_heartbeat(
+                mt5_login=int(info["login"]),
+                mt5_server=str(info["server"]),
+                broker_name=str(info.get("company", "")),
+                mt5_connected=self._mt5_ok,
+                account_balance=float(info.get("balance", 0)),
+                account_equity=float(info.get("equity", 0)),
+            )
+            self._last_kriptoly_hb = ok
+            if not ok:
+                self.log("⚠️ Kriptoly heartbeat başarısız")
+        except Exception as e:
+            self.log(f"Kriptoly heartbeat HATA: {e}")
