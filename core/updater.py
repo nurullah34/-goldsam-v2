@@ -167,30 +167,54 @@ del /q "{bat_path.with_suffix('.vbs')}" 2>NUL
 
 
 def _spawn_bat(bat_path: Path) -> bool:
-    """Bat'i KESIN gorunmez calistir.
+    """Bat'i guvenilir bir sekilde baslat. 4 farkli yontem fallback ile.
 
-    Yontem: PowerShell -WindowStyle Hidden -Command "Start-Process ... -WindowStyle Hidden"
-    Hem PS host'u gizli, hem ic'erdeki bat penceresi gizli. Windows Terminal
-    default olsa bile etkin (VBS yontemi escape problemi yapiyordu).
+    Kullanici raporu: PowerShell zinciri bazen tetiklenmiyor (_update.bat
+    klasorde duruyor, hic calismamis). Daha agresif: birden cok yontem
+    dene, biri tutarsa devam.
+
+    Yontemler (sirayla):
+    1. Win32 ShellExecuteW (en guvenilir, Defender'a takilmaz)
+    2. os.startfile (Windows shell)
+    3. cmd start /B (yeni pencere acmaz)
+    4. subprocess.Popen direkt (son care)
     """
     DETACHED_PROCESS = 0x00000008
     CREATE_NO_WINDOW = 0x08000000
+    bat_str = str(bat_path)
+    cwd_str = str(bat_path.parent)
 
-    # PowerShell ile gizli baslat
+    # YONTEM 1: Win32 API ShellExecuteW (SW_HIDE = 0)
     try:
-        ps_cmd = (
-            f"Start-Process -FilePath '{bat_path}' "
-            f"-WindowStyle Hidden -WorkingDirectory '{bat_path.parent}'"
+        import ctypes
+        result = ctypes.windll.shell32.ShellExecuteW(
+            None,           # hwnd
+            "open",         # operation
+            bat_str,        # file
+            None,           # parameters
+            cwd_str,        # working dir
+            0,              # SW_HIDE
         )
+        # ShellExecuteW > 32 ise basari
+        if int(result) > 32:
+            return True
+    except Exception:
+        pass
+
+    # YONTEM 2: os.startfile (Windows shell handler)
+    try:
+        import os
+        os.startfile(bat_str)
+        return True
+    except Exception:
+        pass
+
+    # YONTEM 3: cmd start /B (yeni pencere acmaz)
+    try:
         subprocess.Popen(
-            [
-                "powershell.exe",
-                "-NoProfile",
-                "-ExecutionPolicy", "Bypass",
-                "-WindowStyle", "Hidden",
-                "-Command", ps_cmd,
-            ],
-            cwd=str(bat_path.parent),
+            f'start "" /B "{bat_str}"',
+            shell=True,
+            cwd=cwd_str,
             creationflags=DETACHED_PROCESS | CREATE_NO_WINDOW,
             close_fds=True,
             stdin=subprocess.DEVNULL,
@@ -201,11 +225,11 @@ def _spawn_bat(bat_path: Path) -> bool:
     except Exception:
         pass
 
-    # Fallback: dogrudan cmd /c (window gozukebilir ama yine de calisir)
+    # YONTEM 4: subprocess.Popen direkt (pencere acabilir ama calisir)
     try:
         subprocess.Popen(
-            ["cmd", "/c", str(bat_path)],
-            cwd=str(bat_path.parent),
+            [bat_str],
+            cwd=cwd_str,
             creationflags=DETACHED_PROCESS | CREATE_NO_WINDOW,
             close_fds=True,
             stdin=subprocess.DEVNULL,
