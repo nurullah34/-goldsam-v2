@@ -1363,14 +1363,30 @@ class MainWindow(QMainWindow):
             self._log_msg(f"❌ Ayarlar kaydedilemedi: {msg}")
 
     def _check_update(self) -> None:
-        """Güncelle butonu — GitHub'dan en son sürümü kontrol et + uygula."""
-        # Bot çalışıyorsa önce durdur (worker thread temiz kapansın)
+        """Güncelle butonu — GitHub'dan en son sürümü kontrol et + uygula.
+
+        KRITIK: Update YOK ise bot'a hicbir sey yapma! Eski mantik worker'i
+        ve MT5'i hemen durduruyordu, 'zaten guncel' durumunda da bot
+        parcalanmis halde kaliyordu — sonra kullanici MT5 Test'e basinca
+        log spam ve sinyal kaybi.
+        """
+        # ONCE remote version kontrolu (bot'a dokunma)
+        from core.updater import fetch_remote_version, is_update_available
+        self._log_msg("GitHub Releases kontrol ediliyor...")
+        remote = fetch_remote_version()
+        if remote is None:
+            self._log_msg("Uzak surum okunamadi (internet/Release).")
+            return
+        if not is_update_available(VERSION, remote):
+            self._log_msg(f"Zaten guncel: v{VERSION} (latest: v{remote})")
+            return  # Hicbir sey durdurma, bot calismaya devam
+
+        # Update VAR — simdi durdur + indir
+        self._log_msg(f"Yeni surum bulundu: v{VERSION} → v{remote}")
         if self.worker is not None and self.worker.isRunning():
-            self._log_msg("Önce botu durduruyorum (güncelleme için)...")
+            self._log_msg("Botu durduruyorum (guncelleme icin)...")
             self.worker.stop()
             self.worker.wait(8000)
-
-        # MT5 bağlantısını da kapat (yeni process açacak)
         if self.mt5.connected:
             try:
                 self.mt5.disconnect()
@@ -1380,7 +1396,6 @@ class MainWindow(QMainWindow):
         result = check_and_update(BASE_DIR, VERSION, self._log_msg)
         if result is True:
             self._log_msg("Yeni sürüm açıldı, eski pencere 3 sn içinde kapanacak...")
-            # 3 sn bekle — yeni process'in Qt penceresi açılmaya zaman bulsun
             QTimer.singleShot(3000, self.close)
 
     # ─── Zoom (Yakınlaştırma/Uzaklaştırma) ────────────────────
