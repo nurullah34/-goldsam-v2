@@ -138,7 +138,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="GoldSam V2 Strategy Server",
-    version="1.1.9",
+    version="1.1.10",
     lifespan=lifespan,
 )
 
@@ -225,7 +225,7 @@ def require_admin(x_admin_token: Optional[str] = Header(None)) -> None:
 def root():
     return {
         "service": "GoldSam V2 Strategy Server",
-        "version": "1.1.9",
+        "version": "1.1.10",
         "status": "running",
     }
 
@@ -263,7 +263,7 @@ def healthz():
         db_ok = False
     return {
         "ok": db_ok and mt5_ok,
-        "version": "1.1.9",
+        "version": "1.1.10",
         "mt5_connected": mt5_ok,
         "db_ok": db_ok,
         "license_count": lic_count,
@@ -335,9 +335,12 @@ def signals_pending(
     if not ok:
         raise HTTPException(status_code=403, detail=msg)
 
+    # mark_picked KALDIRILDI (v1.1.10): Her bot kendi since_id'sini takip
+    # eder. Ayni sinyal birden cok bot tarafindan alinabilir — VPS master
+    # bot ve tum musteri botlari kendi MT5'inde emir acar.
+    # Tek consume yapilirsa bir bot sinyal aliyor, digerleri kaciriyor.
+    # consumed_by sutunu sadece istatistik icin tutuluyor (insanlik kalsin).
     sigs = db.pending_signals(since_id=since_id, limit=limit)
-    if sigs:
-        db.mark_picked([s["id"] for s in sigs], x_agent_token)
     return {"signals": sigs, "count": len(sigs)}
 
 

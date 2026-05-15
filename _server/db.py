@@ -136,13 +136,25 @@ def insert_signal(strategy: str, side: str, symbol: str, lot: float,
         return int(cur.lastrowid)
 
 
-def pending_signals(since_id: int = 0, limit: int = 50) -> list[dict]:
-    """Bot için bekleyen sinyaller (picked_at IS NULL ve > since_id)."""
+def pending_signals(since_id: int = 0, limit: int = 50,
+                    max_age_sec: int = 300) -> list[dict]:
+    """Bot için bekleyen sinyaller.
+
+    DEGISIM (v1.1.10): picked_at filter KALDIRILDI. Her bot kendi
+    since_id'sini takip eder, aynı sinyal birden cok bot tarafindan
+    alinabilir (VPS master bot + musteri botlari aynı pattern'i alir,
+    her biri kendi MT5 hesabinda emir acar).
+
+    max_age_sec: 5 dakikadan eski sinyaller pending degil (bot kapanip
+    acilirsa eski sinyaller dirilmesin).
+    """
+    from datetime import timedelta
+    cutoff = (datetime.utcnow() - timedelta(seconds=max_age_sec)).isoformat(timespec="seconds")
     with _conn() as c:
         rows = c.execute(
-            "SELECT * FROM signals WHERE picked_at IS NULL AND id > ? "
+            "SELECT * FROM signals WHERE id > ? AND created_at > ? "
             "ORDER BY id ASC LIMIT ?",
-            (since_id, limit),
+            (since_id, cutoff, limit),
         ).fetchall()
         return [dict(r) for r in rows]
 

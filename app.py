@@ -917,6 +917,17 @@ class MainWindow(QMainWindow):
 
     # ─── MT5 bağlantı ─────────────────────────────────────────
     def _try_connect_mt5(self) -> None:
+        # MT5 zaten bağlıysa: tum zinciri (lisans + lock + heartbeat) tekrar
+        # tetikleme, sadece kisa onay logla. Aksi takdirde MT5 Test butonuna
+        # her basista 6 satir log spam olusur.
+        if self.mt5.connected and self._account_locked and self._license_ok:
+            ai = self.mt5.account_info or {}
+            self._log_msg(
+                f"MT5 zaten bağlı ✓ #{ai.get('login')} @ {ai.get('server')} | "
+                f"Bakiye ${ai.get('balance', 0):.2f}"
+            )
+            return
+
         self._log_msg("MT5'e bağlanılıyor...")
         ok = self.mt5.connect()
         if ok:
