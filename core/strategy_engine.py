@@ -156,12 +156,15 @@ class StrategyEngine:
                     continue
             self._limit_warned = False
 
-            # Server lot=0, sl=0 placeholder gönderir; kart ayarını uygula
+            # Server lot=0, sl=0, symbol=GOLD# placeholder gönderir;
+            # bot kendi UI sembolu (engine.symbol = kullanicinin broker'inda
+            # ne varsa: XAUUSD, GOLD, GOLD#, vs.) ve kart ayarlarini kullanir.
             sig = signal_from_server(
                 raw,
                 lot_override=card.lot,
                 sl_override=card.sl_usd,
                 trail_override=card.trail_activate_usd,
+                symbol_override=self.symbol,
             )
 
             # Kart adi zaten yon icerebilir (8T LONG / 8T SHORT / GOLDS).

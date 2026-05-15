@@ -197,15 +197,18 @@ class KriptolyClient:
 
 
 def signal_from_server(raw: dict, lot_override: float, sl_override: float,
-                       trail_override: float) -> Signal:
+                       trail_override: float,
+                       symbol_override: str = "") -> Signal:
     """Server'dan gelen sinyal dict'i + UI kart ayarları → Signal.
 
-    Server lot/sl_usd'yi 0 placeholder olarak gönderir; bot kartların
-    UI değerlerini koyar.
+    Server lot/sl_usd/symbol'u placeholder olarak gönderir; bot kartların
+    UI değerlerini ve KENDI sembolünü kullanır. (Server master demo'da
+    'GOLD#' kullanabilir ama müşteri broker'ında sembol 'XAUUSD' veya
+    'GOLD' olabilir — symbol_override ile çözülür.)
     """
     return Signal(
         side=raw["side"],
-        symbol=raw["symbol"],
+        symbol=symbol_override or raw["symbol"],
         lot=float(lot_override),
         magic=int(raw["magic"]),
         sl_usd=float(sl_override),
