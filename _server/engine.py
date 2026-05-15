@@ -163,11 +163,15 @@ class Engine:
                 continue
 
             # GUARD 2 — son sinyalden bu yana en az 10 M1 bar (10 dk) geçmiş olmalı
+            # strategy_id = strat.display (magic EKLENMEZ) → MICRO-S'in 27 alt
+            # modulu (P01..P27) tek havuz olur, hangisi tetiklenirse digerleri
+            # de 10 dk cooldown'a girer. Diger strategy display'leri zaten
+            # unique (8T LONG, 8T SHORT, MULTI100 M30/H2/H3/H4, GOLDS, GENIS).
             current_bar_time = (
                 bars_by_tf.get("M1", [{}])[-1].get("time")
                 if bars_by_tf.get("M1") else None
             )
-            strategy_id = f"{strat.display}_{sig_magic}"
+            strategy_id = strat.display
             if current_bar_time and strategy_id in self._last_signal_bar:
                 try:
                     last_t = datetime.fromisoformat(self._last_signal_bar[strategy_id])
