@@ -41,25 +41,28 @@ class TradeExecutor:
             self.log(f"Sembol/tick bilgisi alınamadı: {symbol}")
             return None
 
-        # SL hesapla: lot başına $1 fiyat hareketi ile USD karşılığı
-        if si.trade_tick_size <= 0:
-            self.log("trade_tick_size = 0, SL hesaplanamadı.")
-            return None
-        usd_per_dollar = (si.trade_tick_value / si.trade_tick_size) * signal.lot
-        if usd_per_dollar <= 0:
-            self.log("usd_per_dollar = 0, SL hesaplanamadı.")
-            return None
-
-        sl_dist_price = signal.sl_usd / usd_per_dollar
         digits = max(int(si.digits), 2)
+
+        # SL hesaplama — eger sl_usd > 0 ise: lot basina $1 fiyat hareketi
+        # ile USD karsiligi formul. sl_usd <= 0 ise SL'siz emir (MT5'e
+        # sl=0.0 gonderirsek SL set edilmez — kullanici SL'siz islem
+        # almak isteyebilir, bu meşru bir secim).
+        sl_dist_price = 0.0
+        if signal.sl_usd > 0:
+            if si.trade_tick_size <= 0:
+                self.log("trade_tick_size = 0, SL hesaplanamadı. SL'siz emir gönderiliyor.")
+            else:
+                usd_per_dollar = (si.trade_tick_value / si.trade_tick_size) * signal.lot
+                if usd_per_dollar > 0:
+                    sl_dist_price = signal.sl_usd / usd_per_dollar
 
         if signal.side == "buy":
             price = tick.ask
-            sl_price = round(price - sl_dist_price, digits)
+            sl_price = round(price - sl_dist_price, digits) if sl_dist_price > 0 else 0.0
             order_type = mt5.ORDER_TYPE_BUY
         else:  # "sell"
             price = tick.bid
-            sl_price = round(price + sl_dist_price, digits)
+            sl_price = round(price + sl_dist_price, digits) if sl_dist_price > 0 else 0.0
             order_type = mt5.ORDER_TYPE_SELL
 
         request = {
@@ -88,10 +91,10 @@ class TradeExecutor:
             return None
 
         side_txt = "LONG" if signal.side == "buy" else "SHORT"
+        sl_text = f"SL {sl_price:.{digits}f}" if sl_price > 0 else "SL YOK"
         self.log(
             f"✅ EMİR AÇILDI #{result.order} | {side_txt} {signal.lot} lot @ "
-            f"{result.price:.{digits}f} | SL {sl_price:.{digits}f} | "
-            f"magic={signal.magic}"
+            f"{result.price:.{digits}f} | {sl_text} | magic={signal.magic}"
         )
         return int(result.order)
 

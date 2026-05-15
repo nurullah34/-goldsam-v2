@@ -164,10 +164,18 @@ class StrategyEngine:
                 trail_override=card.trail_activate_usd,
             )
 
+            # Kart adi zaten yon icerebilir (8T LONG / 8T SHORT / GOLDS).
+            # Cift LONG/SHORT yazimi onlemek icin sadece kart adinda yoksa side ekle.
             side_txt = "LONG" if side == "buy" else "SHORT"
+            label_upper = card.label.upper()
+            if side_txt in label_upper:
+                header = card.label
+            else:
+                header = f"{card.label} {side_txt}"
+            sl_text = f"SL=${sig.sl_usd}" if sig.sl_usd > 0 else "SL YOK"
             self.log(
-                f"🎯 SİNYAL #{raw.get('id', '?')} → {card.label} {side_txt} "
-                f"@ {sig.symbol} | lot={sig.lot} SL=${sig.sl_usd} magic={magic}"
+                f"🎯 SİNYAL #{raw.get('id', '?')} → {header} "
+                f"@ {sig.symbol} | lot={sig.lot} {sl_text} magic={magic}"
             )
 
             if self.on_signal is not None:
