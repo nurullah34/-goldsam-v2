@@ -1288,7 +1288,11 @@ class MainWindow(QMainWindow):
 
     # ─── Settings persistence (M9) ────────────────────────────
     def _load_all_settings(self) -> None:
-        """settings.json'dan UI'yı doldur."""
+        """settings.json'dan UI'yı doldur (init'te bir kez)."""
+        # IDEMPOTENT GUARD: ikinci cagri varsa atla
+        if getattr(self, "_settings_loaded_once", False):
+            return
+        self._settings_loaded_once = True
         s = user_settings.load()
         strats = s.get("strategies", {})
         self.card_8t_long.load_settings(strats.get("8t_long", {}))

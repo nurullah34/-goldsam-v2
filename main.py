@@ -10,6 +10,12 @@ BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
+# PyInstaller onedir bundle'da PID dosyasi exe yaninda olmali (sys.executable
+# parent), Python script lokasyonunda degil. Boylece coklu instance kontrolu
+# guvenilir calisir.
+if getattr(sys, "frozen", False):
+    BASE_DIR = Path(sys.executable).resolve().parent
+
 from PySide6.QtWidgets import QApplication
 
 from app import MainWindow
