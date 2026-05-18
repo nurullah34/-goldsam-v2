@@ -892,6 +892,11 @@ class MainWindow(QMainWindow):
         # Önce kaydedilmiş ayarları yükle (UI dolsun)
         QTimer.singleShot(50, self._load_all_settings)
         QTimer.singleShot(400, self._try_connect_mt5)
+
+        # Trailing widget'larini monitor'a CANLI bagla — kullanici degerleri
+        # bot calisirken degistirirse anında etkili olur (durdur/baslat
+        # gerekmez). 5$ yazinca monitor 5$, checkbox kapatinca trailing dur.
+        QTimer.singleShot(100, self._wire_trail_live)
         # Varlık + stats periyodik yenile (2 sn)
         self._stats_timer = QTimer(self)
         self._stats_timer.timeout.connect(self._refresh_stats)
@@ -1254,6 +1259,52 @@ class MainWindow(QMainWindow):
         self.worker.status_changed.connect(self._set_bot_running)
         self.worker.error.connect(lambda e: self._log_msg(f"WORKER HATA: {e}"))
         self.worker.start()
+
+    # ─── Trailing CANLI bind (kullanici UI degisikligi anında etkili) ─
+    def _wire_trail_live(self) -> None:
+        """Kasa panelindeki trail input/checkbox'larini monitor'a baglar."""
+        try:
+            if self._kasa_trail_long_input is not None:
+                self._kasa_trail_long_input.valueChanged.connect(
+                    self._on_trail_value_changed
+                )
+            if self._kasa_trail_short_input is not None:
+                self._kasa_trail_short_input.valueChanged.connect(
+                    self._on_trail_value_changed
+                )
+            if self._kasa_trail_long_chk is not None:
+                self._kasa_trail_long_chk.toggled.connect(
+                    self._on_trail_toggle_changed
+                )
+            if self._kasa_trail_short_chk is not None:
+                self._kasa_trail_short_chk.toggled.connect(
+                    self._on_trail_toggle_changed
+                )
+        except Exception as e:
+            self._log_msg(f"⚠ Trail bind hatası: {e}")
+
+    def _on_trail_value_changed(self, *_args) -> None:
+        """LONG veya SHORT trail $ degeri degisti — monitor'a anında yansıt."""
+        long_v = self._kasa_trail_long()
+        short_v = self._kasa_trail_short()
+        try:
+            self.monitor.set_trail_activate(long_v, short_v)
+            self._log_msg(f"⚙ Trail aktivasyon güncellendi: LONG ${long_v} / SHORT ${short_v}")
+        except Exception:
+            pass
+
+    def _on_trail_toggle_changed(self, *_args) -> None:
+        """LONG veya SHORT trailing checkbox değişti — monitor'a anında yansıt."""
+        long_on = bool(self._kasa_trail_long_chk and self._kasa_trail_long_chk.isChecked())
+        short_on = bool(self._kasa_trail_short_chk and self._kasa_trail_short_chk.isChecked())
+        try:
+            self.monitor.set_trail_enabled(long_on, short_on)
+            self._log_msg(
+                f"⚙ Trailing toggle: LONG={'AÇIK' if long_on else 'KAPALI'}, "
+                f"SHORT={'AÇIK' if short_on else 'KAPALI'}"
+            )
+        except Exception:
+            pass
 
     def _stop_bot(self) -> None:
         if self.worker is None or not self.worker.isRunning():
