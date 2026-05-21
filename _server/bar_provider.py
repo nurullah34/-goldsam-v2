@@ -71,6 +71,24 @@ def terminal_alive() -> bool:
         return False
 
 
+def current_tick(symbol: str = None) -> Optional[tuple[float, float]]:
+    """Anlik (bid, ask) fiyatlari dondur. Sinyal entry snapshot ve outcome
+    tracking icin kullanilir.
+    """
+    if mt5 is None:
+        return None
+    if not _init():
+        return None
+    try:
+        sym = symbol or SYMBOL
+        ti = mt5.symbol_info_tick(sym)
+        if ti is None:
+            return None
+        return float(ti.bid), float(ti.ask)
+    except Exception:
+        return None
+
+
 def account_info() -> Optional[dict]:
     if not _init():
         return None

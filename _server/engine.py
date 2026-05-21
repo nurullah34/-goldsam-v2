@@ -18,6 +18,7 @@ from config import (
 )
 import db
 import kriptoly_bridge
+import bar_provider
 from bar_provider import fetch_bars, is_connected, account_info
 
 # Stratejiler — bot ile aynı import path'leri
@@ -181,6 +182,15 @@ class Engine:
                 except Exception:
                     pass
 
+            # Entry price snapshot — outcome tracking icin sinyal anindaki fiyat.
+            # BUY: ask (alis), SELL: bid (satis).
+            tick_now = bar_provider.current_tick(sig.symbol)
+            if tick_now is not None:
+                bid_now, ask_now = tick_now
+                entry_price = ask_now if sig.side == "buy" else bid_now
+            else:
+                entry_price = 0.0
+
             # Lot/SL/Trail sunucuda BELİRLENMEZ — bot her müşteri için kendi UI'sından okur.
             # Server sadece "ne, hangi yön, hangi strateji, hangi magic" der.
             signal_id = db.insert_signal(
@@ -192,6 +202,7 @@ class Engine:
                 sl_usd=0.0,      # placeholder — bot kullanıcı ayarını kullanır
                 comment=str(sig.comment),
                 trail_activate_usd=0.0,  # placeholder — bot Kasa panelinden alır
+                entry_price=entry_price,  # outcome tracking için snapshot
             )
             self._signal_count += 1
             # DUPLICATE GUARD — bu bar üzerinde sinyal verildi olarak işaretle
@@ -205,11 +216,53 @@ class Engine:
 
         self._last_tick = datetime.utcnow()
 
+        # Outcome tracking — acik sinyalleri tara, +$1 (BUY) veya -$1 (BUY) /
+        # -$1 (SELL) veya +$1 (SELL) hedefe ulasanlari isaretle.
+        try:
+            self._track_open_signals()
+        except Exception as e:
+            self.log(f"[TRACK] HATA: {e}")
+
         # Kriptoly heartbeat — her ~60sn'de bir
         self._tick_counter += 1
         if self._tick_counter >= self._heartbeat_every_ticks:
             self._tick_counter = 0
             self._send_kriptoly_heartbeat()
+
+    def _track_open_signals(self) -> None:
+        """Outcome'i belli olmayan sinyalleri tara. Fiyat +$1 hareket ettiyse
+        'tp', -$1 hareket ettiyse 'sl' olarak isaretle. Yon bazli:
+          BUY:  current - entry  → kar
+          SELL: entry - current  → kar
+        $1 fiyat farki = altinda ~$1 lot bazli kar (zaten kullanici 1 birim
+        fiyat hareketinden bahsediyor).
+        """
+        tick = bar_provider.current_tick(self.symbol)
+        if tick is None:
+            return
+        bid, ask = tick
+
+        open_sigs = db.open_signals_for_tracking(max_age_hours=4)
+        for sig in open_sigs:
+            entry = float(sig.get("entry_price") or 0)
+            if entry <= 0:
+                continue
+            side = sig["side"]
+            # Cikis fiyati: BUY kapatirken bid'i kullanir, SELL kapatirken ask'i.
+            if side == "buy":
+                current = bid
+                profit_price = current - entry
+            else:
+                current = ask
+                profit_price = entry - current
+
+            # Hedef: +$1 fiyat hareketi (kullanici istegi)
+            if profit_price >= 1.0:
+                db.update_outcome(sig["id"], "tp", peak_profit_usd=profit_price)
+                self.log(f"✅ #{sig['id']} TP ({profit_price:+.2f} fiyat)")
+            elif profit_price <= -1.0:
+                db.update_outcome(sig["id"], "sl", peak_profit_usd=profit_price)
+                self.log(f"❌ #{sig['id']} SL ({profit_price:+.2f} fiyat)")
 
     def _has_open_position(self, magic: int) -> bool:
         """GUARD 1 — VPS MT5'te bu magic ile açık pozisyon var mı?"""

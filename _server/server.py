@@ -138,7 +138,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="GoldSam V2 Strategy Server",
-    version="1.1.11",
+    version="1.1.12",
     lifespan=lifespan,
 )
 
@@ -225,7 +225,7 @@ def require_admin(x_admin_token: Optional[str] = Header(None)) -> None:
 def root():
     return {
         "service": "GoldSam V2 Strategy Server",
-        "version": "1.1.11",
+        "version": "1.1.12",
         "status": "running",
     }
 
@@ -263,7 +263,7 @@ def healthz():
         db_ok = False
     return {
         "ok": db_ok and mt5_ok,
-        "version": "1.1.11",
+        "version": "1.1.12",
         "mt5_connected": mt5_ok,
         "db_ok": db_ok,
         "license_count": lic_count,
@@ -272,9 +272,15 @@ def healthz():
 
 
 @app.get("/public/signals/recent")
-def public_signals_recent(limit: int = Query(50, ge=1, le=200)):
-    """Site dashboard için son sinyaller (anonim)."""
+def public_signals_recent(limit: int = Query(50, ge=1, le=500)):
+    """Site dashboard için son sinyaller (anonim). outcome dahil."""
     return {"signals": db.recent_signals(limit=limit)}
+
+
+@app.get("/public/signals/stats")
+def public_signals_stats(hours: int = Query(168, ge=1, le=720)):
+    """Son N saatin TP/SL/Open istatistikleri + win rate."""
+    return db.signal_stats(since_hours=hours)
 
 
 # ───── Agent (Bot) endpoints ─────────────────────────────────

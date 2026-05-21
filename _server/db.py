@@ -15,7 +15,8 @@ _LOCK = threading.Lock()
 
 
 def _migrate_v1_to_v2(c) -> None:
-    """Eski licenses tablosuna eksik kolonlari ekle."""
+    """Eski licenses + signals tablolarina eksik kolonlari ekle."""
+    # licenses migration
     cols = [r[1] for r in c.execute("PRAGMA table_info(licenses)").fetchall()]
     add = {
         "license_key":     "TEXT",
@@ -28,6 +29,21 @@ def _migrate_v1_to_v2(c) -> None:
         if name not in cols:
             try:
                 c.execute(f"ALTER TABLE licenses ADD COLUMN {name} {typ}")
+            except Exception:
+                pass
+
+    # signals migration (v1.1.12+) — outcome tracking icin kolonlar
+    sig_cols = [r[1] for r in c.execute("PRAGMA table_info(signals)").fetchall()]
+    sig_add = {
+        "entry_price":      "REAL DEFAULT 0",
+        "outcome":          "TEXT",  # 'tp' / 'sl' / 'expired' / NULL=open
+        "outcome_at":       "TEXT",
+        "peak_profit_usd":  "REAL DEFAULT 0",
+    }
+    for name, typ in sig_add.items():
+        if name not in sig_cols:
+            try:
+                c.execute(f"ALTER TABLE signals ADD COLUMN {name} {typ}")
             except Exception:
                 pass
 
@@ -124,16 +140,73 @@ def _conn():
 
 def insert_signal(strategy: str, side: str, symbol: str, lot: float,
                   magic: int, sl_usd: float, comment: str = "",
-                  trail_activate_usd: float = 1.0) -> int:
+                  trail_activate_usd: float = 1.0,
+                  entry_price: float = 0.0) -> int:
+    """Sinyal kaydet. entry_price = sinyal anindaki fiyat snapshot (BUY: ask,
+    SELL: bid). Sonradan outcome tracking icin kullanilir."""
     now = datetime.utcnow().isoformat(timespec="seconds")
     with _conn() as c:
         cur = c.execute(
             "INSERT INTO signals (strategy, side, symbol, lot, magic, sl_usd, "
-            "comment, trail_activate_usd, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            "comment, trail_activate_usd, created_at, entry_price) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
             (strategy, side, symbol, lot, magic, sl_usd, comment,
-             trail_activate_usd, now),
+             trail_activate_usd, now, entry_price),
         )
         return int(cur.lastrowid)
+
+
+def open_signals_for_tracking(max_age_hours: int = 4) -> list[dict]:
+    """Outcome'i henuz belli olmayan (NULL) acik sinyalleri dondur.
+
+    max_age_hours: bu kadar eski sinyaller artik takip edilmez (zaman asimi).
+    """
+    cutoff = (datetime.utcnow() - timedelta(hours=max_age_hours)).isoformat(timespec="seconds")
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT id, side, entry_price, created_at FROM signals "
+            "WHERE outcome IS NULL AND entry_price > 0 AND created_at > ? "
+            "ORDER BY id ASC",
+            (cutoff,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def update_outcome(signal_id: int, outcome: str,
+                   peak_profit_usd: float = 0.0) -> None:
+    """Sinyal sonucunu kaydet (tp / sl / expired)."""
+    now = datetime.utcnow().isoformat(timespec="seconds")
+    with _conn() as c:
+        c.execute(
+            "UPDATE signals SET outcome=?, outcome_at=?, peak_profit_usd=? "
+            "WHERE id=? AND outcome IS NULL",
+            (outcome, now, peak_profit_usd, signal_id),
+        )
+
+
+def signal_stats(since_hours: int = 168) -> dict:
+    """Son N saatin istatistikleri (default 7 gun)."""
+    cutoff = (datetime.utcnow() - timedelta(hours=since_hours)).isoformat(timespec="seconds")
+    with _conn() as c:
+        row = c.execute(
+            "SELECT "
+            "  COUNT(*) total, "
+            "  SUM(CASE WHEN outcome='tp' THEN 1 ELSE 0 END) tp, "
+            "  SUM(CASE WHEN outcome='sl' THEN 1 ELSE 0 END) sl, "
+            "  SUM(CASE WHEN outcome IS NULL THEN 1 ELSE 0 END) open "
+            "FROM signals WHERE created_at > ?",
+            (cutoff,),
+        ).fetchone()
+        total = row[0] or 0
+        tp = row[1] or 0
+        sl = row[2] or 0
+        op = row[3] or 0
+        closed = tp + sl
+        wr = (tp / closed * 100) if closed > 0 else None
+        return {
+            "total": total, "tp": tp, "sl": sl, "open": op,
+            "closed": closed, "win_rate": wr,
+        }
 
 
 def pending_signals(since_id: int = 0, limit: int = 50,

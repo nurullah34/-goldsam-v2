@@ -58,10 +58,10 @@ footer{margin-top:48px;padding-top:24px;border-top:1px solid #2d2d2d;text-align:
   <div class="stats">
     <div class="stat-card"><div class="stat-label">Toplam Sinyal</div><div class="stat-value" id="stat-total">0</div></div>
     <div class="stat-card"><div class="stat-label">Bugün</div><div class="stat-value" id="stat-today">0</div></div>
-    <div class="stat-card"><div class="stat-label">BUY</div><div class="stat-value green" id="stat-buy">0</div></div>
-    <div class="stat-card"><div class="stat-label">SELL</div><div class="stat-value red" id="stat-sell">0</div></div>
-    <div class="stat-card"><div class="stat-label">Aktif Strateji</div><div class="stat-value" id="stat-strats">9</div></div>
-    <div class="stat-card"><div class="stat-label">Son Sinyal</div><div class="stat-value" id="stat-last" style="font-size:14px;color:#aaa">—</div></div>
+    <div class="stat-card"><div class="stat-label">TP (✓)</div><div class="stat-value green" id="stat-tp">0</div></div>
+    <div class="stat-card"><div class="stat-label">SL (✗)</div><div class="stat-value red" id="stat-sl">0</div></div>
+    <div class="stat-card"><div class="stat-label">Win Rate</div><div class="stat-value" id="stat-wr">—</div></div>
+    <div class="stat-card"><div class="stat-label">Açık</div><div class="stat-value" id="stat-open" style="color:#aaa">0</div></div>
   </div>
 
   <div class="tabs">
@@ -82,13 +82,14 @@ footer{margin-top:48px;padding-top:24px;border-top:1px solid #2d2d2d;text-align:
         <th>Strateji</th>
         <th>Yön</th>
         <th>Sembol</th>
+        <th>Entry</th>
+        <th>Sonuç</th>
         <th>Magic</th>
-        <th>Comment</th>
         <th>Zaman</th>
       </tr>
     </thead>
     <tbody id="rows">
-      <tr><td colspan="7" class="empty">Yükleniyor...</td></tr>
+      <tr><td colspan="8" class="empty">Yükleniyor...</td></tr>
     </tbody>
   </table>
 
@@ -101,18 +102,36 @@ let allSignals = [];
 
 async function fetchData() {
   try {
-    const [statusRes, sigRes] = await Promise.all([
+    const [statusRes, sigRes, statsRes] = await Promise.all([
       fetch("/public/status"),
-      fetch("/public/signals/recent?limit=200"),
+      fetch("/public/signals/recent?limit=500"),
+      fetch("/public/signals/stats?hours=168"),
     ]);
     const status = await statusRes.json();
     const sigs = await sigRes.json();
+    const stats = await statsRes.json();
     updateStatus(status);
     allSignals = sigs.signals || [];
+    updateStats(stats);
     render();
   } catch (e) {
     document.getElementById("status-dot").classList.add("off");
     document.getElementById("status-text").textContent = "OFFLINE";
+  }
+}
+
+function updateStats(s) {
+  document.getElementById("stat-tp").textContent = s.tp || 0;
+  document.getElementById("stat-sl").textContent = s.sl || 0;
+  document.getElementById("stat-open").textContent = s.open || 0;
+  const wr = s.win_rate;
+  const wrEl = document.getElementById("stat-wr");
+  if (wr === null || wr === undefined) {
+    wrEl.textContent = "—";
+    wrEl.style.color = "#aaa";
+  } else {
+    wrEl.textContent = wr.toFixed(1) + "%";
+    wrEl.style.color = wr >= 60 ? "#4ade80" : wr >= 40 ? "#fbbf24" : "#f87171";
   }
 }
 
@@ -132,35 +151,40 @@ function render() {
   if (currentFilter !== "all") {
     list = allSignals.filter(s => (s.strategy || "").startsWith(currentFilter));
   }
-  const buys = allSignals.filter(s => s.side === "buy").length;
-  const sells = allSignals.filter(s => s.side === "sell").length;
   document.getElementById("stat-total").textContent = allSignals.length;
-  document.getElementById("stat-buy").textContent = buys;
-  document.getElementById("stat-sell").textContent = sells;
   const today = new Date().toISOString().slice(0, 10);
   const todayCount = allSignals.filter(s => (s.created_at || "").startsWith(today)).length;
   document.getElementById("stat-today").textContent = todayCount;
-  if (allSignals.length > 0) {
-    const last = allSignals[0];
-    const ts = last.created_at ? last.created_at.replace("T", " ") : "—";
-    document.getElementById("stat-last").textContent = ts;
-  }
 
   if (list.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="7" class="empty">Bu filtrede sinyal yok.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="empty">Bu filtrede sinyal yok.</td></tr>';
     return;
   }
-  tbody.innerHTML = list.map(s => `
+  tbody.innerHTML = list.map(s => {
+    const entry = s.entry_price ? Number(s.entry_price).toFixed(2) : '—';
+    const out = s.outcome;
+    let outcomeHtml;
+    if (out === 'tp') {
+      outcomeHtml = '<span style="color:#4ade80;font-weight:600">✓ TP</span>';
+    } else if (out === 'sl') {
+      outcomeHtml = '<span style="color:#f87171;font-weight:600">✗ SL</span>';
+    } else if (out === 'expired') {
+      outcomeHtml = '<span style="color:#9ca3af">⊘ Süre</span>';
+    } else {
+      outcomeHtml = '<span style="color:#a3a3a3">⏳ Açık</span>';
+    }
+    return `
     <tr>
       <td class="muted">#${s.id}</td>
       <td><span class="strategy">${escapeHtml(s.strategy || "")}</span></td>
       <td class="${s.side === 'buy' ? 'side-buy' : 'side-sell'}">${s.side === 'buy' ? '▲ BUY' : '▼ SELL'}</td>
       <td>${escapeHtml(s.symbol || "")}</td>
+      <td style="font-family:monospace;color:#e5e5e5">${entry}</td>
+      <td>${outcomeHtml}</td>
       <td class="muted">${s.magic || 0}</td>
-      <td class="muted">${escapeHtml(s.comment || "")}</td>
       <td class="muted">${(s.created_at || "").replace("T", " ")}</td>
     </tr>
-  `).join("");
+  `;}).join("");
 }
 
 function escapeHtml(s) {
